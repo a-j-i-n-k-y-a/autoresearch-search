@@ -1,0 +1,9 @@
+rank-bm25
+sentence-transformers
+faiss-cpu
+datasets
+pandas
+numpy
+openai
+tqdm
+scikit-learn
