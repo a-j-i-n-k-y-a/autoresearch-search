@@ -1,56 +1,88 @@
 # Search Autoresearch
 
-Experiment to have the LLM autonomously improve a search system.
+Autonomous agent improving a movie search system across three objectives.
 
 ## Setup
 
-To set up a new experiment:
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. Initialize `results.tsv` with just the header row.
+5. Confirm and begin.
 
-1. Agree on a run tag based on today's date e.g. `may10`
-2. Create branch: `git checkout -b autoresearch/<tag>`
-3. Read these files for full context:
-   - `prepare.py` — fixed constants, data prep, evaluation. DO NOT MODIFY.
-   - `search.py` — the only file you modify. The search function.
-4. Verify data exists: check that `data/movies.pkl` and `data/faiss.index` exist.
-   If not, tell the human to run `python prepare.py` first.
-5. Initialize `results.tsv` with just the header row.
-6. Confirm setup and begin.
+## The objective
 
-## Experimentation
+Optimize a **single score** that balances three constraints:
 
-Each experiment runs the full benchmark and reports recall@K.
+    score = recall@10 - max(0, (latency_ms - 30) / 100) * 0.2
 
-**What you CAN do:**
-- Modify `search.py` — this is the ONLY file you edit.
-- Change anything inside the `search()` function.
-- Use any of the resources passed in: df, bm25, model, index.
-- Add helper functions above `search()` in the same file.
-- Try: query expansion, vector search, hybrid combinations,
-  reranking, query preprocessing, different top_k values.
+- **Recall@10** — primary objective. Higher is better. Max is 1.0.
+- **Latency** — cost proxy. Queries under 30ms are free. Above that, you pay.
+- **Simplicity** — all else equal, fewer lines wins. Removing code that doesn't hurt recall is a win.
 
-**What you CANNOT do:**
-- Modify `prepare.py`. It is read-only.
-- Modify the benchmark queries or expected results.
-- Change the `evaluate()` function.
-- Install new packages — use only what's already installed.
+The score is what determines keep vs discard. A recall gain that costs too much latency is not worth it.
 
-**The goal: maximize recall@K.**
-Higher recall = more expected movies found in top 10 results.
-Current max possible = 1.0
+## Available resources in search()
 
-**Simplicity criterion:**
-All else being equal, simpler is better.
-A 0.01 improvement that adds 50 lines of complex code — not worth it.
-A 0.01 improvement from a clean 5-line change — definitely keep.
-Removing code and getting equal or better results — great outcome.
-
-**The first run:**
-Always run as-is first to establish the baseline.
-
-## Running an experiment
-
-```bash
-python agent_loop.py --eval-only
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
 ```
 
-This runs the benchmark on the current `search.py` and prints:
+- `df` — DataFrame: columns title, overview, genres, vote_average, vote_count, text
+- `bm25` — BM25Okapi: `bm25.get_scores(query.lower().split())`
+- `model` — SentenceTransformer("all-MiniLM-L6-v2"): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## Environment constraints — violations crash the run
+
+- Allowed imports ONLY: `numpy`, `rank_bm25`, `sentence_transformers`, `faiss`, `sklearn`
+- `nltk` is NOT installed
+- Use `int()` or `np.int64()`, never `np.int` (deprecated)
+- Do NOT import from other project files
+
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (genres, vote_count, vote_average, release_date)
+- Am I searching the right field? (title vs overview vs genres vs full text)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF)
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting
+- Cosine similarity
+- Pure BM25 only
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Output format
+
+The benchmark prints:
+    recall@10: 0.700000
+    latency:   27.5ms
+    score:     0.695000
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+    commit  score   recall  latency_ms  status  description
+
+Status is `keep`, `discard`, or `crash`. Use 0.0 for all metrics on crash.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation. Keep experimenting until manually stopped.
