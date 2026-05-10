@@ -8,7 +8,7 @@ def search(query, df, bm25, model, index, top_k=10):
     tokenized = query.lower().split()
 
     query_vec = model.encode([query]).astype("float32")
-    vec_distances, vec_ids = index.search(query_vec, top_k * 15)
+    vec_distances, vec_ids = index.search(query_vec, top_k * 20)
     vec_ids = vec_ids[0]
     vec_distances = vec_distances[0]
 
@@ -16,7 +16,7 @@ def search(query, df, bm25, model, index, top_k=10):
     vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]
 
     bm25_scores_all = bm25.get_scores(tokenized)
-    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]
+    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]
     bm25_cands = bm25_top_idxs.tolist()
     bm25_cand_scores = bm25_scores_all[bm25_top_idxs]
 
