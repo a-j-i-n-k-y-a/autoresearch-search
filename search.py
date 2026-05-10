@@ -20,14 +20,7 @@ def search(query, df, bm25, model, index, top_k=10):
         best = np.argsort(scores)[::-1][:top_k]
         return df.iloc[best][["title", "overview"]].to_dict("records")
 
-    # BM25 scores for the candidate set
-    bm25_scores = bm25.get_scores(tokenized)
-    cand_scores = [(doc_id, bm25_scores[doc_id]) for doc_id in cand_ids]
+    # take the best top_k candidate ids directly from vector search ranking    
+    top_cand_ids = cand_ids[:top_k]
 
-    # rerank by BM25 descending
-    cand_scores.sort(key=lambda x: x[1], reverse=True)
-
-    # take the best top_k indices
-    top_indices = [doc_id for doc_id, _ in cand_scores[:top_k]]
-
-    return df.iloc[top_indices][["title", "overview"]].to_dict("records")
+    return df.iloc[top_cand_ids][["title", "overview"]].to_dict("records")
