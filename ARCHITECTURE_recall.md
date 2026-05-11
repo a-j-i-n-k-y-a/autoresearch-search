@@ -1,29 +1,28 @@
 # Architecture
 
 ## What it does
-The movie search system helps users find relevant movies by retrieving a list of movie titles and overviews based on a given query. It combines the strengths of natural language processing and information retrieval to provide accurate results.
+The system combines two search methods to find movies: keyword matching (for exact terms) and meaning-based matching (for conceptual relationships). It retrieves a set of potential matches from both methods, calculates a score for each based on their relevance and popularity, and returns the top 10 results.
 
 ## Components
-The system consists of several components: 
-- **BM25**: a bag-of-words retrieval algorithm that calculates the relevance of each movie based on the query terms.
-- **SentenceTransformer**: a sentence embedding model that converts the query and movie overviews into dense vectors for semantic search.
-- **Faiss Index**: an efficient indexing system that enables fast similarity search between the query vector and movie vectors.
-- **Vote Count and Average**: additional features that consider the popularity and rating of each movie.
+- **BM25Okapi:** Performs keyword-based retrieval to capture explicit search terms.
+- **FAISS (Vector Search):** Uses a pre-trained model to encode queries and documents into vectors, allowing for semantic retrieval that understands synonyms and context.
+- **Popularity Boost:** A multiplier derived from `vote_average` and `vote_count` that prioritizes highly-rated, well-known movies to refine the final ranking.
 
 ## Why it works
-The system works by combining the strengths of each component. BM25 provides a robust baseline for retrieval, while the SentenceTransformer and Faiss Index enable semantic search and efficient vector similarity calculation. The vote count and average features help to boost the ranking of popular and highly-rated movies.
+The design balances precision and speed. By pre-calculating vector embeddings, the system performs "approximate" searches in milliseconds. The hybrid approach mitigates the weaknesses of each individual method: BM25 finds exact matches that vector search might miss, while vector search identifies relevant results where the exact keywords don't appear. Scaling by popularity ensures that the highest-quality, most relevant content surfaces at the top of the result list.
 
 ## Tradeoffs
-To prioritize recall, the system uses a larger candidate pool and combines multiple ranking signals. This approach may increase latency, but it improves the chances of retrieving relevant movies.
+To achieve a high recall while maintaining low latency, we sacrificed exhaustive scoring. Instead of scoring the entire database, we retrieve a smaller, high-confidence candidate pool from both search methods and limit calculations to this subset. This "pruning" is why we maintained a $0.000435$ cost while significantly improving performance.
 
 ## Key experiments
-Unfortunately, none of the experiments resulted in significant improvements to recall. Most experiments crashed due to syntax errors in the search.py file, indicating that the algorithm is sensitive to implementation details.
+- **Major Wins:** Removing redundant heavy computations and focusing on an efficient "Candidate-then-Boost" pipeline improved recall from 0.6 to 0.8 while cutting latency by over 85%.
+- **Failed Attempts:** Attempts to integrate genre-based matching consistently resulted in system crashes or decreased recall, likely due to index mapping errors or over-constraining the search space. Complex Reciprocal Rank Fusion (RRF) approaches were discarded as they provided similar recall to the final logic but at a higher latency cost.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.600 | 0.600 |
-| latency_ms | 164.3 | 164.3 |
+| recall@10 | 0.600 | 0.800 |
+| latency_ms | 169.5 | 25.2 |
 
 ## How to run
 ```bash
