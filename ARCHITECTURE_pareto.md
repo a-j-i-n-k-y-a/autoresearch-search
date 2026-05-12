@@ -1,30 +1,29 @@
 # Architecture
 
 ## What it does
-The system performs keyword-based movie searches by matching user queries against the movie database. It identifies the most relevant titles and descriptions by calculating how often and how uniquely query words appear within the text, returning the top 10 matches.
+The system performs an efficient two-stage movie search. First, it uses semantic vector matching to identify a broad set of relevant candidates based on the user's query. Second, it applies a lightweight ranking logic that boosts movies in genres matching the user's query and prioritizes highly popular titles (based on vote count) to ensure the most relevant results appear at the top.
 
 ## Components
-- **BM25 Algorithm:** A robust statistical method that ranks documents based on term frequency and document length, serving as the core retrieval engine.
-- **Pandas DataFrame:** An in-memory data store providing high-speed access to movie metadata (titles and overviews).
-- **NumPy:** Utilized for high-performance numerical operations to sort search scores and extract top-ranking results efficiently.
+*   **Faiss Index:** A vector database that handles high-speed similarity search, allowing the system to find relevant movies in milliseconds.
+*   **Encoder Model:** Translates user queries into numerical embeddings to bridge the gap between natural language and movie metadata.
+*   **Candidate Re-ranker:** A post-processing script that applies a heuristic "genre boost" and rank-based popularity weighting to the top candidates retrieved by the index.
 
 ## Why it works
-The design relies on proven statistical information retrieval (BM25) rather than complex vector embeddings. By avoiding the overhead of external model inference and complex multi-stage reranking, the system maintains consistent recall while ensuring minimal execution time and zero operational cost.
+The design succeeds by offloading the heavy lifting of "meaning" to the vector index, while using simple, deterministic post-processing for precision. By querying 5x the desired top-k results from the index and then re-sorting locally, we maintain low latency while significantly improving recall compared to a raw similarity search.
 
 ## Tradeoffs
-The system prioritizes **cost efficiency and simplicity** over incremental quality gains. Experiments showed that adding vector search, genre bias, or metadata boosting either increased latency or introduced costs without significantly improving recall, leading to the selection of the baseline configuration as the Pareto-optimal solution.
+The system prioritizes **latency and recall (Pareto efficiency)** over architectural complexity. It deliberately discards hybrid BM25 approaches, which proved too computationally expensive, in favor of a "Vector + Rerank" strategy that maintains sub-11ms response times while meeting the target recall.
 
 ## Key experiments
-- **Findings:** Over 20 iterations, no configuration surpassed the baseline recall of 0.600. 
-- **Failures:** Hybrid search (BM25 + Faiss) and metadata-weighted boosting (vote_average) successfully reduced latency in isolated tests but failed to maintain the recall ceiling, often introducing unnecessary financial overhead.
-- **Conclusion:** The complexity of neural-based reranking and feature-weighted scoring provided no measurable performance lift, confirming the baseline as the most efficient architecture.
+*   **Successes:** Vector search combined with genre-matching boosts provided the most significant gains in recall (moving from 0.6 to 0.8). Expanding the retrieval pool to 5x top-k before reranking was essential for finding the right candidates.
+*   **Failures:** All experiments involving BM25 hybrids or complex Min-Max scaling increased latency significantly (up to 81ms) without providing proportional gains in retrieval accuracy. Pure vector search without reranking failed to provide the necessary precision for the top-10 results.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.600 | 0.600 |
-| latency_ms | 20.2 | 20.2 |
-| llm_cost_usd | 0.000 | 0.000 |
+| recall@10 | 0.600 | 0.800 |
+| latency_ms | 14.6 | 10.9 |
+| llm_cost_usd  | 0.000000 | 0.000316 |
 
 ## How to run
 ```bash
