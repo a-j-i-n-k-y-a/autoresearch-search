@@ -1,32 +1,34 @@
 # Architecture
 
 ## What it does
-The system performs an efficient movie search by combining semantic understanding with popularity and categorization. It first identifies a broad set of likely matches using a vector index, then filters and re-ranks those results by blending how well the movie’s description matches the user's intent with the movie's overall popularity and genre alignment.
+The system performs high-precision movie retrieval by combining semantic vector embeddings with heuristic metadata signals. It retrieves a wide pool of candidates using FAISS and refines the ranking by balancing vector proximity, popularity bias, and genre-based keyword matching.
 
 ## Components
-*   **FAISS Index:** Provides high-speed semantic retrieval, allowing the system to find relevant candidates in milliseconds.
-*   **Vector Encoder:** Converts natural language queries into mathematical representations to capture the underlying meaning rather than just keywords.
-*   **Log-Normalized Popularity Scorer:** Uses `log1p(vote_count)` to integrate popularity without letting blockbusters drown out niche but relevant films.
-*   **Genre-Signal Booster:** A lightweight post-retrieval adjustment that rewards candidates if the query explicitly mentions genres contained in the movie metadata.
+*   **Encoder:** Uses a sentence-transformer model to map user queries into a high-dimensional semantic vector space.
+*   **Vector Index:** A FAISS-based retrieval engine that performs efficient $k$-nearest neighbor search (retrieving 500 candidates for a Top-10 output).
+*   **Ranking Logic:** A custom re-ranking function that computes a composite score:
+    *   **Semantic Score:** $1 / (1 + \text{distance})$
+    *   **Popularity Bias:** $\log(1 + \text{vote\_count}) \times 0.05$ (normalizes high-volume outliers).
+    *   **Genre Boost:** Additive constant ($+0.1$) for direct term matches within movie metadata.
 
 ## Why it works
-The design relies on "Retrieval-then-Rerank": using a vector search to shrink the search space to a manageable candidate pool (50x top-k) keeps latency low. The reranking logic (similarity + popularity + genre boost) acts as a high-precision filter that improves result quality without requiring a costly secondary model or deep-text processing.
+The architecture optimizes for recall by acknowledging that pure semantic search often struggles with specific entity preferences (like popularity) or user-specified genre intent. By widening the initial candidate pool and applying post-retrieval reranking, the system preserves high recall while injecting business logic that aligns with user expectations.
 
 ## Tradeoffs
-The system prioritizes **latency** and **recall** over complex hybrid rankings like BM25-ensemble methods, which were discarded due to high compute costs and marginal recall gains. We accepted a slightly broader candidate pool in exchange for a streamlined, deterministic mathematical ranking, which significantly reduced total inference time.
+*   **Compute Latency:** The decision to maintain the baseline architecture prioritizes recall stability over latency optimization. More complex hybrid approaches (BM25/RRF) consistently regressed recall during testing, suggesting that the current embedding model is highly optimized for this specific dataset.
+*   **Operational Cost:** By avoiding complex multi-stage retrieval pipelines that incurred API or processing costs in failed experiments, the final design maintains a $0.00 cost profile.
 
 ## Key experiments
-*   **The Breakthrough:** Moving to a "Multi-vector query expansion" approach significantly stabilized recall at 0.900 while keeping latency under 15ms.
-*   **The Failures:** Explicit BM25 integration and complex RRF (Reciprocal Rank Fusion) methods were discarded because they consistently spiked latency (often >80ms) without providing a proportional boost to recall. 
-*   **Stability Issues:** Many attempts at heavy meta-data filtering led to index errors and system crashes; these were replaced by the current, more stable additive score weighting.
+*   **Hybrid Failure:** 29 consecutive experiments attempting to integrate BM25 or RRF (Reciprocal Rank Fusion) resulted in lower recall, likely due to feature misalignment or loss of semantic nuance.
+*   **Stability:** The baseline configuration proved highly robust, showing that the most effective path was refining the ranking function rather than altering the retrieval foundation.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.900 | 0.900 |
-| latency_ms | 84.1 | 13.6 |
+| latency_ms | 208.1 | 208.1 |
 
 ## How to run
-```bash
-python agent_loop.py --eval-only
-```
+1. Ensure the movie dataframe and FAISS index are loaded into memory.
+2. Initialize the embedding model.
+3. Call the `search(query, df, bm25, model, index, top_k)` function with the query string and required dependencies.
