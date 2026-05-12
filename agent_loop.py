@@ -132,13 +132,14 @@ def git_restore():
     subprocess.run(["git", "checkout", "--", "search.py"])
 
 # ─── LOGGING ────────────────────────────────────────────────
-def log_result(commit, metrics, status, description):
+def log_result(exp_id,commit, metrics, status, description):
     """Append one row to results.tsv — three separate metric columns."""
     if not os.path.exists("results.tsv"):
         with open("results.tsv", "w") as f:
             f.write("commit\trecall\tlatency_ms\tllm_cost_usd\tstatus\tdescription\n")
     with open("results.tsv", "a") as f:
         f.write(
+            f"{exp_id}\t"
             f"{commit}\t"
             f"{metrics['recall']:.6f}\t"
             f"{metrics['latency_ms']:.1f}\t"
@@ -532,7 +533,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     # Only commit baseline if this is a fresh start
     if not past_records:
         commit = git_commit("baseline")
-        log_result(commit, baseline_metrics, "keep", "baseline")
+        log_result("exp_000", commit, baseline_metrics, "keep", "baseline")
         save_experiment("exp_000", "", read_file("search.py"),
                         baseline_metrics, "keep", "baseline")
         history.append({
@@ -596,7 +597,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             save_experiment(exp_id, prompt, new_code,
                             crash_metrics, "crash", description)
             git_restore()
-            log_result("crash", crash_metrics, "crash", description)
+            log_result(exp_id, "crash", crash_metrics, "crash", description)
             continue
 
         new_metrics = {
@@ -611,7 +612,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
 
         if is_improvement(new_metrics, best_metrics, objective):
             commit = git_commit(f"experiment: {description}")
-            log_result(commit, new_metrics, "keep", description)
+            log_result(exp_id, commit, new_metrics, "keep", description)
             save_experiment(exp_id, prompt, new_code,
                             new_metrics, "keep", description)
             print(f"✅ KEEP — improved on objective '{objective}'")
@@ -623,7 +624,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             })
         else:
             git_restore()
-            log_result("discarded", new_metrics, "discard", description)
+            log_result(exp_id, "discarded", new_metrics, "discard", description)
             save_experiment(exp_id, prompt, new_code,
                             new_metrics, "discard", description)
             print(f"❌ DISCARD — no improvement on '{objective}'")
