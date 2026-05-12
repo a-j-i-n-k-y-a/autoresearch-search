@@ -1,88 +1,130 @@
 # Autoresearch — Movie Search Optimizer
 
-
+An autonomous agent that iteratively improves a movie search system across three constraints: recall, latency, and LLM cost. Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch).
 
 ---
 
-## How it works
+## Architecture
 
 ```
-baseline search.py
-     ↓
-ask LLM for modification
-     ↓
-apply → benchmark → compute metrics
-     ↓
-improvement? → keep + commit
-no improvement? → discard + restore
-     ↓
-repeat
+┌─────────────────────────────────────────────────────────┐
+│                     OFFLINE LOOP                        │
+│                                                         │
+│   search.py  ──▶  agent_loop.py  ──▶  benchmark        │
+│       ▲               │                    │            │
+│       │          LLM generates         recall          │
+│       │          new search.py         latency         │
+│       │               │                cost            │
+│       └── keep ◀──────┴──── discard                    │
+│                                                         │
+│   Every ✅ KEEP:                                        │
+│     → committed to git                                  │
+│     → logged in results.tsv       (exp_id cross-ref)   │
+│     → saved in experiments/log.jsonl   (full replay)   │
+│     → copied to search_profiles/<objective>.py         │
+│     → search_profiles/registry.py regenerated          │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│                   SERVE TIME (ROUTER)                   │
+│                                                         │
+│         query + constraint                              │
+│               │                                         │
+│           router.py                                     │
+│               │                                         │
+│   ┌───────────┴────────────────────┐                    │
+│   │        registry.py             │                    │
+│   │  high_recall  → 0.900 recall   │                    │
+│   │  balanced     → 0.800 recall   │                    │
+│   │  low_latency  → 0.600 recall   │                    │
+│   └───────────┬────────────────────┘                    │
+│               │                                         │
+│   search_profiles/<profile>.py                          │
+│               │                                         │
+│         top 10 movies                                   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Three constraints are tracked separately as a tuple — never collapsed into one score:
+### Three constraints — tracked separately, never combined
 
-| Constraint | What it measures |
-|---|---|
-| `recall@10` | Fraction of expected movies found in top 10 results |
-| `latency_ms` | Wall clock milliseconds per query |
-| `llm_cost_usd` | USD cost of the API call that generated the search spec |
+| Constraint | What it measures | Optimized by |
+|---|---|---|
+| `recall@10` | Fraction of expected movies found in top 10 | `--objective recall` |
+| `latency_ms` | Wall clock ms per query | `--objective latency` |
+| `llm_cost_usd` | USD cost of the API call that generated the code | `--objective cost` |
+
+### Code is the weights
+
+There is no model training. The agent does code search across possible retrieval algorithms. `search.py` is the artifact — the winning implementation is what gets deployed.
 
 ---
 
 ## Project structure
 
 ```
-search.py           ← the only file the agent edits (your deliverable)
-agent_loop.py       ← autonomous experiment loop
-prepare.py          ← fixed data prep and evaluation (do not modify)
-program.md          ← agent instructions (the research org config)
-results.tsv         ← full experiment log (recall, latency, cost per run)
-ARCHITECTURE.md     ← auto-generated explainer of the winning algorithm
-experiments/
-  log.jsonl         ← full replay log (code + metrics per experiment)
-  prompts/          ← deduplicated prompt store keyed by hash
-requirements.txt    ← dependencies
+autoresearch/
+├── search.py                      ← agent edits this (current best)
+├── agent_loop.py                  ← autonomous experiment loop
+├── prepare.py                     ← data prep + evaluation (do not modify)
+├── router.py                      ← routes queries to the right profile
+├── program.md                     ← agent instructions
+├── results.tsv                    ← experiment log (exp_id, recall, latency, cost)
+├── ARCHITECTURE_recall.md         ← auto-generated after recall run
+├── ARCHITECTURE_pareto.md         ← auto-generated after pareto run
+├── requirements.txt
+├── .env                           ← GOOGLE_API_KEY
+├── data/                          ← dataset + faiss index (gitignored)
+│   ├── movies.pkl
+│   ├── faiss.index
+│   └── embeddings.pkl
+├── experiments/
+│   ├── log.jsonl                  ← full replay log (code + metrics per exp)
+│   └── prompts/                   ← deduplicated prompts keyed by hash
+└── search_profiles/
+    ├── __init__.py
+    ├── registry.py                ← auto-generated, updated on every keep
+    ├── high_recall.py             ← best recall implementation
+    ├── balanced.py                ← best pareto implementation
+    └── low_latency.py             ← best latency implementation
 ```
 
 ---
 
-## Quick start
+## Setup
 
-### 1. Clone the repo
+### 1. Clone and install
 
 ```bash
-git clone https://github.com/<your-username>/<repo-name>.git
-cd <repo-name>
+git clone https://github.com/a-j-i-n-k-y-a/autoresearch-search.git
+cd autoresearch-search
 git checkout autoresearchiter2/may10
-```
-
-### 2. Install dependencies
-
-```bash
 pip install -r requirements.txt
 ```
 
-### 3. Set up environment variables
+### 2. Set environment variables
 
-Create a `.env` file in the project root:
+Create a `.env` file:
 
-```bash
-# For Groq (default)
-GROQ_API_KEY=your_groq_api_key_here
+```
+GOOGLE_API_KEY=your_google_api_key_here
+```
 
-# For Anthropic / Claude Opus 4 (interviewer benchmark)
+Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+For Claude Opus 4:
+```
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
-### 4. Download dataset and build index (one-time, ~2 min)
+### 3. Build dataset and index (one-time, ~2 min)
 
 ```bash
 python prepare.py
 ```
 
-This downloads the movies dataset, builds the FAISS index, and saves both to `data/`. Only needs to run once.
+Downloads 100k movies, builds FAISS index, saves to `data/`.
 
-### 5. Verify setup
+### 4. Verify setup
 
 ```bash
 python agent_loop.py --eval-only
@@ -90,56 +132,106 @@ python agent_loop.py --eval-only
 
 Expected output:
 ```
-recall@10    : 0.600000
-latency      : ~30ms
+recall@10    : 0.900000
+latency      : ~14ms
 ```
 
 ---
 
 ## Running experiments
 
-### Run 20 experiments optimizing for recall (default)
+### Benchmark current search.py
 
 ```bash
-python agent_loop.py --n 20 --objective recall
+python agent_loop.py --eval-only
 ```
 
-### Run optimizing for latency
+### Run the experiment loop
 
 ```bash
+# Step 1 — maximize recall (run first)
+python agent_loop.py --n 50 --objective recall
+
+# Step 2 — trim latency without dropping recall (run second)
+python agent_loop.py --n 30 --objective pareto
+
+# Step 3 — minimize latency (optional)
 python agent_loop.py --n 20 --objective latency
 ```
 
-### Run optimizing for LLM cost
+Every `✅ KEEP` automatically updates `search_profiles/<profile>.py` and `registry.py`.
+
+### Replay a past experiment
 
 ```bash
-python agent_loop.py --n 20 --objective cost
+# Restore search.py to a specific experiment's code and benchmark it
+python agent_loop.py --replay exp_042
+
+# Find exp_id from a git commit hash
+grep -B2 "ca53447" experiments/log.jsonl
+
+# Restore your best version after replay
+git checkout -- search.py
 ```
 
-### Run in Pareto mode (improve one constraint without hurting others)
+### Manually export current search.py as a profile
 
 ```bash
-python agent_loop.py --n 20 --objective pareto
+python agent_loop.py --export-profile recall
+python agent_loop.py --export-profile pareto
+python agent_loop.py --export-profile latency
 ```
 
-### Replay a specific experiment exactly
+---
+
+## Using the router
 
 ```bash
-python agent_loop.py --replay exp_007
+# List all available profiles
+python router.py --profiles
+
+# Query with auto-inferred constraint
+python router.py "psychological thriller with a twist"
+
+# Query with explicit constraint
+python router.py "inception" --constraint low_latency
+python router.py "robot consciousness AI" --constraint high_recall
+python router.py "romantic comedy enemies to lovers" --constraint balanced
+
+# Demo mode — runs example queries across all profiles
+python router.py --demo
+```
+
+### Constraint guide
+
+| Constraint | Recall | Latency | Use when |
+|---|---|---|---|
+| `high_recall` | 0.900 | ~14ms | Full search page, recommendations |
+| `balanced` | 0.800 | ~25ms | Default — general search |
+| `low_latency` | 0.600 | ~9ms | Autocomplete, typeahead |
+
+### From Python
+
+```python
+from router import route
+
+response = route("dark sci-fi about consciousness", constraint="high_recall")
+for movie in response["results"]:
+    print(movie["title"])
 ```
 
 ---
 
 ## Switching to Claude Opus 4
 
-In `agent_loop.py`, change these three lines:
+In `agent_loop.py`, change three lines:
 
 ```python
-GROQ_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-MODEL        = "claude-opus-4-5"
+GOOGLE_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+MODEL          = "claude-opus-4-5"
 
 client = OpenAI(
-    api_key=GROQ_API_KEY,
+    api_key=GOOGLE_API_KEY,
     base_url="https://api.anthropic.com/v1"
 )
 ```
@@ -148,38 +240,14 @@ Everything else stays the same — Anthropic's API is OpenAI-compatible.
 
 ---
 
-## Outputs
-
-After a run completes you'll have:
-
-| File | Contents |
-|---|---|
-| `search.py` | Best search implementation found |
-| `results.tsv` | Full experiment trail — recall, latency, cost, status per run |
-| `ARCHITECTURE.md` | Auto-generated explanation of the winning algorithm |
-| `experiments/log.jsonl` | Complete replay log — every experiment's code and metrics |
-| `experiments/prompts/` | Deduplicated prompt store for full auditability |
-
----
-
 ## Benchmark queries
 
-The evaluation runs 5 fixed queries against a 100k movie dataset and measures recall@10 — how many expected movies appear in the top 10 results.
+Five fixed queries evaluated against 100k movies. Ground truth — never change.
 
-```python
-"dream heist movie Leonardo DiCaprio layers of subconscious"  → Inception
-"astronaut stranded in space wormhole black hole"             → Interstellar, Gravity
-"robot humanoid artificial intelligence consciousness"        → Ex Machina, A.I.
-"psychological thriller unreliable narrator mind bending"     → Shutter Island, Black Swan
-"time machine going back to the future paradox"              → Back to the Future, Looper
-```
-
----
-
-## Design notes
-
-- **Code is the weights** — there is no model training. The agent does code search across the space of possible retrieval algorithms. `search.py` is the artifact.
-- **Replayability** — every experiment's exact code is saved in `experiments/log.jsonl`. Any run can be restored and re-benchmarked with `--replay`.
-- **Prompt deduplication** — prompts are stored once by MD5 hash, keeping log records small (~400 bytes each).
-- **Architecture documentation** — at the end of every run, the agent writes `ARCHITECTURE.md` explaining what it discovered in plain English.
-- **Git-tracked** — every kept experiment is a commit. `git log --oneline` is a readable history of what worked.
+| Query | Expected |
+|---|---|
+| dream heist movie Leonardo DiCaprio layers of subconscious | Inception |
+| astronaut stranded in space wormhole black hole | Interstellar, Gravity |
+| robot humanoid artificial intelligence consciousness | Ex Machina, A.I. Artificial Intelligence |
+| psychological thriller unreliable narrator mind bending twist | Shutter Island, Black Swan |
+| time machine going back to the future paradox | Back to the Future, Looper |
