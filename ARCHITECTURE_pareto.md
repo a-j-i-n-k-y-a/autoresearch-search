@@ -1,29 +1,30 @@
 # Architecture
 
 ## What it does
-The system performs a text-based search across a movie database. When you type a query, it breaks your search terms into individual words and matches them against the movie overviews using a statistical scoring method that favors unique, relevant keywords. It then returns the top 10 most relevant matches.
+The system performs keyword-based movie searches by matching user queries against the movie database. It identifies the most relevant titles and descriptions by calculating how often and how uniquely query words appear within the text, returning the top 10 matches.
 
 ## Components
-*   **BM25 Algorithm**: A robust probabilistic ranking function that scores movies based on keyword frequency and rarity. It is the core engine for matching user intent to text descriptions.
-*   **Pandas Dataframe**: Used as an in-memory data store for movie metadata (`title`, `overview`), enabling fast lookup and retrieval once the top indices are identified.
-*   **NumPy**: Facilitates high-performance array manipulation for sorting scores and slicing the result set.
+- **BM25 Algorithm:** A robust statistical method that ranks documents based on term frequency and document length, serving as the core retrieval engine.
+- **Pandas DataFrame:** An in-memory data store providing high-speed access to movie metadata (titles and overviews).
+- **NumPy:** Utilized for high-performance numerical operations to sort search scores and extract top-ranking results efficiently.
 
 ## Why it works
-The design leverages BM25’s ability to handle document length and term frequency effectively without the overhead of modern embedding models. By keeping the retrieval logic constrained to keyword matching, the system maintains a predictable, low-latency profile without the hidden costs associated with vector space search.
+The design relies on proven statistical information retrieval (BM25) rather than complex vector embeddings. By avoiding the overhead of external model inference and complex multi-stage reranking, the system maintains consistent recall while ensuring minimal execution time and zero operational cost.
 
 ## Tradeoffs
-The system prioritizes **Pareto optimality**—achieving the best possible balance between performance (latency) and utility (recall) for zero additional monetary cost. Through extensive automated testing, it was determined that adding complex hybrid models or machine-learned components increased latency and operational cost without providing a statistically significant gain in user-perceived recall for the specific target dataset.
+The system prioritizes **cost efficiency and simplicity** over incremental quality gains. Experiments showed that adding vector search, genre bias, or metadata boosting either increased latency or introduced costs without significantly improving recall, leading to the selection of the baseline configuration as the Pareto-optimal solution.
 
 ## Key experiments
-*   **High-Performing Failures**: "Vector search with post-filtering" demonstrated a significant recall boost (0.800) but was discarded due to the failure to satisfy the multi-objective Pareto constraint (increased latency/cost).
-*   **Redundancy**: Experiments involving hybrid combinations (BM25 + Faiss/RRF) consistently increased latency (up to 26.9ms) and cost while failing to improve recall beyond the baseline 0.600.
-*   **Baseline Resilience**: The baseline configuration was proven to be the most efficient implementation, as all 20 iterative variations failed to provide a superior return on investment for the defined metrics.
+- **Findings:** Over 20 iterations, no configuration surpassed the baseline recall of 0.600. 
+- **Failures:** Hybrid search (BM25 + Faiss) and metadata-weighted boosting (vote_average) successfully reduced latency in isolated tests but failed to maintain the recall ceiling, often introducing unnecessary financial overhead.
+- **Conclusion:** The complexity of neural-based reranking and feature-weighted scoring provided no measurable performance lift, confirming the baseline as the most efficient architecture.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.600 | 0.600 |
-| latency_ms | 13.4 | 13.4 |
+| latency_ms | 20.2 | 20.2 |
+| llm_cost_usd | 0.000 | 0.000 |
 
 ## How to run
 ```bash
