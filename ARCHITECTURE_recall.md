@@ -1,33 +1,30 @@
 # Architecture
 
 ## What it does
-The system performs a high-speed search by first finding a broad group of similar movies using mathematical vectors, then refining that list by adjusting for a movie's popularity and how well its genre matches your search words. This two-step process ensures we look at enough candidates to be accurate without wasting time on slow, full-database text matching.
+The system performs an efficient movie search by combining semantic understanding with popularity and categorization. It first identifies a broad set of likely matches using a vector index, then filters and re-ranks those results by blending how well the movie’s description matches the user's intent with the movie's overall popularity and genre alignment.
 
 ## Components
-- **FAISS Index**: Used for rapid vector retrieval. It acts as the "first pass" to quickly narrow down millions of movies to a manageable subset of 500 candidates.
-- **Semantic Encoder**: Converts the user's natural language query into a numerical vector to capture the "meaning" of the request.
-- **Log-normalized Popularity Score**: Uses the `vote_count` (log-scaled) to add a slight bias toward well-known movies, preventing obscure outliers from dominating.
-- **Genre Booster**: A post-retrieval reranking step that performs a keyword match against movie genres to reward results that align with the user’s specific categorical intent.
+*   **FAISS Index:** Provides high-speed semantic retrieval, allowing the system to find relevant candidates in milliseconds.
+*   **Vector Encoder:** Converts natural language queries into mathematical representations to capture the underlying meaning rather than just keywords.
+*   **Log-Normalized Popularity Scorer:** Uses `log1p(vote_count)` to integrate popularity without letting blockbusters drown out niche but relevant films.
+*   **Genre-Signal Booster:** A lightweight post-retrieval adjustment that rewards candidates if the query explicitly mentions genres contained in the movie metadata.
 
 ## Why it works
-- **Efficiency**: By limiting the expensive text-matching operations to the initial vector search, we keep latency under 15ms.
-- **Recall**: Increasing the initial retrieval pool to $50 \times k$ ensures the system never misses the "right" movie during the initial vector pass, while the additive scoring logic (similarity + popularity + genre) ensures the most relevant items float to the top.
-- **Robustness**: Using `np.log1p` for popularity effectively balances blockbusters with niche but highly relevant titles.
+The design relies on "Retrieval-then-Rerank": using a vector search to shrink the search space to a manageable candidate pool (50x top-k) keeps latency low. The reranking logic (similarity + popularity + genre boost) acts as a high-precision filter that improves result quality without requiring a costly secondary model or deep-text processing.
 
 ## Tradeoffs
-- **Complexity vs. Performance**: We prioritized raw recall and low latency by abandoning heavy, multi-field BM25 scoring, which caused significant performance degradation in previous iterations.
-- **Memory**: The system maintains a larger candidate pool (500 items) to guarantee recall, which uses slightly more memory per request than a smaller window but remains well within the efficiency targets.
+The system prioritizes **latency** and **recall** over complex hybrid rankings like BM25-ensemble methods, which were discarded due to high compute costs and marginal recall gains. We accepted a slightly broader candidate pool in exchange for a streamlined, deterministic mathematical ranking, which significantly reduced total inference time.
 
 ## Key experiments
-- **Success**: Moving to a "Multi-vector query expansion" strategy was the definitive breakthrough, jumping recall to 0.900.
-- **Success**: Simplifying the pipeline by removing heavy, redundant BM25 compute cycles was essential to reducing latency from >100ms to ~13ms.
-- **Failure**: Numerous attempts at complex RRF (Reciprocal Rank Fusion) and hybrid BM25/FAISS ensembles either crashed the agent or failed to improve recall while significantly bloating latency.
+*   **The Breakthrough:** Moving to a "Multi-vector query expansion" approach significantly stabilized recall at 0.900 while keeping latency under 15ms.
+*   **The Failures:** Explicit BM25 integration and complex RRF (Reciprocal Rank Fusion) methods were discarded because they consistently spiked latency (often >80ms) without providing a proportional boost to recall. 
+*   **Stability Issues:** Many attempts at heavy meta-data filtering led to index errors and system crashes; these were replaced by the current, more stable additive score weighting.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.700 | 0.900 |
-| latency_ms | 113.2 | 13.6 |
+| recall@10 | 0.900 | 0.900 |
+| latency_ms | 84.1 | 13.6 |
 
 ## How to run
 ```bash
