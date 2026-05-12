@@ -13,6 +13,7 @@ from prepare import load_resources, evaluate, BENCHMARK_QUERIES
 
 load_dotenv()
 
+# Active: Google Gemini 3.1 Flash-Lite
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 MODEL          = "gemini-3.1-flash-lite-preview"
 
@@ -25,6 +26,25 @@ client = OpenAI(
 # Google Gemini 3.1 Flash-Lite pricing (per 1k tokens)
 COST_PER_1K_INPUT  = 0.000100
 COST_PER_1K_OUTPUT = 0.000400
+
+# ── Switch to Claude Opus 4 ──────────────────────────────────
+# Comment out the block above and uncomment below:
+#
+# GOOGLE_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+# MODEL          = "claude-opus-4-5"
+#
+# client = OpenAI(
+#     api_key=GOOGLE_API_KEY,
+#     base_url="https://api.anthropic.com/v1"
+# )
+# ─────────────────────────────────────────────────────────────
+
+# ── Claude Opus 4 pricing (per 1k tokens) ────────────────────
+# Uncomment if switching to Opus 4:
+# COST_PER_1K_INPUT  = 0.015
+# COST_PER_1K_OUTPUT = 0.075
+# ─────────────────────────────────────────────────────────────
+
 
 # ─── PROFILE MAPPING ────────────────────────────────────────
 # Maps --objective → search_profiles/<name>.py
