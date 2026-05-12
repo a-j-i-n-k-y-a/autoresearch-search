@@ -1,0 +1,183 @@
+
+You are an autonomous research agent improving a movie search system.
+
+## Your instructions (program.md):
+# Search Autoresearch
+
+Autonomous agent improving a movie search system across three objectives.
+
+## Setup
+
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. Initialize `results.tsv` with just the header row.
+5. Confirm and begin.
+
+## The objective
+
+Optimize a **single score** that balances three constraints:
+
+    score = recall@10 - max(0, (latency_ms - 30) / 100) * 0.2
+
+- **Recall@10** — primary objective. Higher is better. Max is 1.0.
+- **Latency** — cost proxy. Queries under 30ms are free. Above that, you pay.
+- **Simplicity** — all else equal, fewer lines wins. Removing code that doesn't hurt recall is a win.
+
+The score is what determines keep vs discard. A recall gain that costs too much latency is not worth it.
+
+## Available resources in search()
+
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
+```
+
+- `df` — DataFrame: columns title, overview, genres, vote_average, vote_count, text
+- `bm25` — BM25Okapi: `bm25.get_scores(query.lower().split())`
+- `model` — SentenceTransformer("all-MiniLM-L6-v2"): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## Environment constraints — violations crash the run
+
+- Allowed imports ONLY: `numpy`, `rank_bm25`, `sentence_transformers`, `faiss`, `sklearn`
+- `nltk` is NOT installed
+- Use `int()` or `np.int64()`, never `np.int` (deprecated)
+- Do NOT import from other project files
+
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (genres, vote_count, vote_average, release_date)
+- Am I searching the right field? (title vs overview vs genres vs full text)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF)
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting
+- Cosine similarity
+- Pure BM25 only
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Output format
+
+The benchmark prints:
+    recall@10: 0.700000
+    latency:   27.5ms
+    score:     0.695000
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+    commit  score   recall  latency_ms  status  description
+
+Status is `keep`, `discard`, or `crash`. Use 0.0 for all metrics on crash.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation. Keep experimenting until manually stopped.
+
+## Current search.py:
+```python
+import numpy as np
+from rank_bm25 import BM25Okapi
+import faiss
+
+def search(query, df, bm25, model, index, top_k=10):
+    tokenized = query.lower().split()
+    query_vec = model.encode([query]).astype("float32")
+    
+    vec_distances, vec_ids = index.search(query_vec, top_k * 5)
+    vec_ids = vec_ids[0]
+    
+    bm25_scores = bm25.get_scores(tokenized)
+    bm25_cands = np.argsort(bm25_scores)[-50:]
+    
+    cand_ids = np.unique(np.concatenate([vec_ids[vec_ids != -1], bm25_cands]))
+    
+    bm25_s = bm25_scores[cand_ids]
+    
+    faiss_s = np.zeros(len(cand_ids))
+    for i, cid in enumerate(cand_ids):
+        idx = np.where(vec_ids == cid)[0]
+        faiss_s[i] = vec_distances[0][idx[0]] if len(idx) > 0 else 100.0
+        
+    bm25_r = np.argsort(np.argsort(-bm25_s))
+    faiss_r = np.argsort(np.argsort(faiss_s))
+    
+    rrf = 1.0 / (bm25_r + faiss_r + 60)
+    
+    boost = df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values)
+    final_scores = rrf * boost
+    
+    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]
+    return df.iloc[top_idx][["title", "overview"]].to_dict("records")
+```
+
+## Experiment history (last 10):
+- baseline: recall=0.600  latency=169.5ms  cost=$0.000000  (keep)
+- # Simplify: remove heavy title_bm25 compute: recall=0.700  latency=25.9ms  cost=$0.000404  (keep)
+- Simplify RRF, remove explicit looping: recall=0.700  latency=25.1ms  cost=$0.000349  (discard)
+- Simple weighted combination of scores: recall=0.600  latency=26.5ms  cost=$0.000319  (discard)
+- # Boost hybrid with genre matches: recall=0.000  latency=0.0ms  cost=$0.000374  (crash)
+  ERROR:
+Traceback (most recent call last):
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/agent_loop.py", line 518, in run_experiment_loop
+    new_recall, new_latency = run_eval()
+                              ~~~~~~~~^^
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/agent_loop.py", line 79, in run_eval
+    recall  = evaluate(search_module.search, df, bm25, model, index)
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/prepare.py", line 100, in evaluate
+    results = search_fn(query, 
+
+## Active objective: recall
+Maximize recall@10. Latency and cost are secondary.
+
+## Three constraints tracked separately (never combined into one score):
+- recall@10      — fraction of expected movies found in top 10 results
+- latency_ms     — wall clock milliseconds per query
+- llm_cost_usd   — cost of this API call to generate the spec
+
+## ALREADY TRIED — do not repeat these experiments:
+  - # Simplify: remove heavy title_bm25 compute
+  - Simplify RRF, remove explicit looping
+  - Simple weighted combination of scores
+  - # Boost hybrid with genre matches
+If your idea is similar to any of the above, pick something different.
+
+## ALREADY IN THE CODE — do not re-add these, they are implemented:
+  - Reciprocal Rank Fusion (RRF)
+  - Vote score boosting
+Suggesting something already in the code wastes an experiment.
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- Can I add genres as a third BM25 signal alongside title and full text?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated in modern numpy)
+- Do NOT import from other project files
+
+# DESCRIPTION: <5 words or less describing the change>
+Return the description line above FIRST, then immediately the raw Python code.
+No markdown fences. No explanation. Just the description comment then the code.

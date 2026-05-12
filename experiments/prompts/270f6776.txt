@@ -1,0 +1,203 @@
+
+You are an autonomous research agent improving a movie search system.
+
+## Your instructions (program.md):
+# Search Autoresearch
+
+Autonomous agent improving a movie search system across three objectives.
+
+## Setup
+
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. Initialize `results.tsv` with just the header row.
+5. Confirm and begin.
+
+## The objective
+
+Three constraints tracked separately — never combined:
+- **recall@10** — primary. Higher is better. Max 1.0.
+- **latency_ms** — lower is better. Under 30ms is ideal.
+- **llm_cost_usd** — cost of the API call that generated this code.
+
+The active objective is passed at runtime via --objective flag.
+Improving on the active objective = keep. Otherwise = discard.
+
+## Available resources in search()
+
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
+```
+
+- `df` — DataFrame: columns title, overview, genres, vote_average, vote_count, text
+- `bm25` — BM25Okapi: `bm25.get_scores(query.lower().split())`
+- `model` — SentenceTransformer("all-MiniLM-L6-v2"): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## Environment constraints — violations crash the run
+
+- Allowed imports ONLY: `numpy`, `rank_bm25`, `sentence_transformers`, `faiss`, `sklearn`
+- `nltk` is NOT installed
+- Use `int()` or `np.int64()`, never `np.int` (deprecated)
+- Do NOT import from other project files
+
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (genres, vote_count, vote_average, release_date)
+- Am I searching the right field? (title vs overview vs genres vs full text)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF)
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting
+- Cosine similarity
+- Pure BM25 only
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Output format
+
+The benchmark prints:
+    recall@10    : 0.700000
+    latency      : 27.5ms
+    llm_cost     : $0.001489
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+    commit  recall  latency_ms  llm_cost_usd  status  description
+
+Status is `keep`, `discard`, or `crash`. Use 0.0 for all metrics on crash.
+Three constraints are tracked separately — never combined into one score.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation. Keep experimenting until manually stopped.
+
+## Current search.py:
+```python
+import numpy as np
+
+def search(query, df, bm25, model, index, top_k=10):
+    # Expand query with genre signal if common keywords exist
+    query_vec = model.encode([query])
+    
+    # Retrieve wider candidate pool
+    distances, top_idx = index.search(query_vec.astype("float32"), top_k * 50)
+    
+    candidates = df.iloc[top_idx[0]].copy()
+    candidates['dist'] = distances[0]
+    
+    # Calculate similarity scores
+    sim = 1.0 / (1.0 + candidates['dist'])
+    
+    # Combine semantic similarity with popularity
+    # Use log normalization for vote_count to dampen impact of massive outliers
+    pop_score = np.log1p(candidates['vote_count']) * 0.05
+    candidates['score'] = sim + pop_score
+    
+    # Apply genre boost: check if query words appear in genres
+    query_terms = query.lower().split()
+    for term in query_terms:
+        candidates['score'] += candidates['genres'].str.lower().str.contains(term, regex=False).astype(float) * 0.1
+        
+    ranked = candidates.sort_values(by="score", ascending=False)
+    return ranked.head(top_k)[["title", "overview"]].to_dict("records")
+```
+
+## Experiment history (last 10):
+- Boost popularity by vote_average.: recall=0.700  latency=8.0ms  cost=$0.000319  (discard)
+- Boosted search by normalized ratings and title word match.: recall=0.600  latency=12.5ms  cost=$0.000342  (discard)
+- Rank by BM25, filter by semantic.: recall=0.600  latency=25.0ms  cost=$0.000322  (discard)
+- RRF on title-boosted semantic candidates: recall=0.200  latency=13.9ms  cost=$0.000320  (discard)
+- Use BM25 for retrieval, re-rank with vector similarity.: recall=0.500  latency=424.5ms  cost=$0.000323  (discard)
+- Ensemble BM25 and vector scores.: recall=0.000  latency=0.0ms  cost=$0.000396  (crash)
+  ERROR:
+Traceback (most recent call last):
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/agent_loop.py", line 666, in run_experiment_loop
+    new_recall, new_latency = run_eval()
+                              ~~~~~~~~^^
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/agent_loop.py", line 109, in run_eval
+    recall  = evaluate(search_module.search, df, bm25, model, index)
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/prepare.py", line 100, in evaluate
+    results = search_fn(query,
+- Title similarity weight and semantic rank.: recall=0.600  latency=13.4ms  cost=$0.000360  (discard)
+- BM25 only, simpler retrieval.: recall=0.600  latency=12.2ms  cost=$0.000285  (discard)
+- Weight by semantic and BM25.: recall=0.600  latency=29.4ms  cost=$0.000368  (discard)
+- Vector search with metadata reranking: recall=0.800  latency=11.2ms  cost=$0.000363  (discard)
+
+## Active objective: recall
+Maximize recall@10. Latency and cost are secondary.
+
+## Three constraints tracked separately (never combined into one score):
+- recall@10      — fraction of expected movies found in top 10 results
+- latency_ms     — wall clock milliseconds per query
+- llm_cost_usd   — cost of this API call to generate the spec
+
+## ALREADY TRIED across all runs — do not repeat these:
+  - Hybrid BM25 and Semantic RRF
+  - Hybrid BM25 and Semantic Scores
+  - Weighted title similarity boost
+  - Pure semantic search with reranking
+  - BM25 fallback and score integration
+  - Use vote average to rerank
+  - Boost BM25 with exact matches
+  - Simple semantic retrieval only
+  - Use wider pool, rank by BM25.
+  - Hybrid BM25 and vector integration.
+  - Re-rank candidates using vote average.
+  - BM25 score weighted candidate reranking
+  - Combine BM25 and vector scores
+  - BM25 score weighted candidate pool
+  - Weighted popularity and genre re-ranking
+  - RRF on BM25 and Vector
+  - Hybrid vector and BM25 scaling.
+  - Boost with normalized BM25 scores.
+  - Boost popularity by vote_average.
+  - Boosted search by normalized ratings and title word match.
+  - Rank by BM25, filter by semantic.
+  - RRF on title-boosted semantic candidates
+  - Use BM25 for retrieval, re-rank with vector similarity.
+  - Ensemble BM25 and vector scores.
+  - Title similarity weight and semantic rank.
+  - BM25 only, simpler retrieval.
+  - Weight by semantic and BM25.
+  - Vector search with metadata reranking
+If your idea is similar to any of the above, pick something structurally different.
+
+## ALREADY IN THE CODE — do not re-add these:
+  - Vote score boosting
+  - Genre boosting
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated)
+- Do NOT import from other project files
+
+# DESCRIPTION: <5 words or less describing the change>
+Return the description line above FIRST, then immediately the raw Python code.
+No markdown fences. No explanation. Just the description comment then the code.
