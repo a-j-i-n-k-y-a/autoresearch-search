@@ -53,3 +53,55 @@ discarded	0.600000	26.9	0.000288	discard	# Hybrid semantic and BM25 search
 discarded	0.400000	23.2	0.000267	discard	# BM25 title score multiplier
 discarded	0.800000	12.2	0.000270	discard	# Vector search with post-filtering
 discarded	0.600000	26.2	0.000302	discard	# Weighted BM25 and vector search
+b2ec978	0.600000	20.2	0.000000	keep	baseline
+discarded	0.600000	81.7	0.000233	discard	# Hybrid search with BM25 and Faiss
+discarded	0.600000	14.6	0.000205	discard	# Boost BM25 with vote_average
+discarded	0.600000	35.1	0.000223	discard	# BM25 title weight boost
+discarded	0.600000	14.2	0.000221	discard	# BM25 and weighted vote score
+discarded	0.600000	15.9	0.000209	discard	# BM25 over concatenated text fields
+discarded	0.600000	21.3	0.000235	discard	# Filter by genre keywords
+discarded	0.600000	10.6	0.000214	discard	# Vector-only search with Faiss
+discarded	0.600000	13.0	0.000223	discard	# BM25 over title field only
+discarded	0.600000	12.6	0.000252	discard	# Soft-normalize BM25 with vote_average
+discarded	0.600000	11.7	0.000240	discard	# Simple BM25 over concatenated title and overview
+discarded	0.600000	24.2	0.000268	discard	# Vector search with BM25 reranking
+discarded	0.000000	10.0	0.000277	discard	# Vector search with genre bias
+discarded	0.600000	14.7	0.000271	discard	# Boost top BM25 with normalized votes
+discarded	0.600000	26.4	0.000281	discard	# BM25 and vector score fusion
+discarded	0.600000	25.7	0.000306	discard	# Weighted BM25 and vector RRF
+discarded	0.600000	13.7	0.000253	discard	# BM25 over title field only
+discarded	0.600000	22.0	0.000314	discard	# Weighted RRF on title/overview
+discarded	0.600000	22.2	0.000278	discard	# Log-normalized vote count boost
+discarded	0.600000	13.9	0.000245	discard	# BM25 over genres and title
+discarded	0.600000	27.0	0.000286	discard	# Hybrid search with BM25+Faiss
+95d9221	0.600000	14.6	0.000000	keep	baseline
+discarded	0.600000	81.0	0.000254	discard	Hybrid BM25 and Faiss RRF
+discarded	0.600000	15.8	0.000204	discard	Boost BM25 with vote_average
+discarded	0.600000	24.6	0.000284	discard	Hybrid BM25 and Faiss using Min-Max scaling
+discarded	0.400000	15.6	0.000235	discard	Boost BM25 with Title weight
+ca13b37	0.600000	10.8	0.000202	keep	# Vector search only
+discarded	0.600000	11.3	0.000260	discard	# Vector search with genre bias
+148be5a	0.700000	10.1	0.000238	keep	# Vector search with top-100 reranking
+discarded	0.600000	10.7	0.000223	discard	# Simple vector search only
+discarded	0.800000	33.4	0.000250	discard	Vector search with log-normalized vote_count
+discarded	0.600000	8.4	0.000277	discard	Vector search with vote_average boost
+discarded	0.700000	25.7	0.000287	discard	# Combine vector and BM25 scores
+discarded	0.600000	25.3	0.000287	discard	Hybrid BM25 and Faiss scaling
+discarded	0.700000	22.8	0.000318	discard	Hybrid BM25 and Faiss reranking
+discarded	0.600000	23.0	0.000294	discard	# BM25 title and overview hybrid
+discarded	0.000000	24.2	0.000301	discard	# RRF with BM25 and Faiss
+discarded	0.700000	11.0	0.000283	discard	# Combine vector search with normalized vote_average
+discarded	0.600000	11.2	0.000242	discard	# Pure vector search, optimized retrieval
+crash	0.000000	0.0	0.000340	crash	Hybrid BM25 and vector search.
+ffcaae3	0.800000	10.9	0.000316	keep	Vector search with boosted genres
+discarded	0.700000	12.5	0.000345	discard	# Weighted genre and vote search
+discarded	0.700000	10.6	0.000311	discard	Vector search with vote popularity
+discarded	0.700000	22.6	0.000355	discard	# Combine vector similarity and BM25
+discarded	0.700000	23.9	0.000376	discard	Hybrid BM25 and vector ranking
+discarded	0.600000	11.9	0.000322	discard	# Vector search with cosine similarity
+discarded	0.700000	12.7	0.000316	discard	# Vector search with L2 reranking
+discarded	0.400000	11.3	0.000341	discard	# Boost candidates using vote_average
+discarded	0.700000	8.0	0.000327	discard	# Vector search with L2 distance ranking
+discarded	0.600000	11.7	0.000276	discard	# Simplify to pure vector search
+discarded	0.600000	12.0	0.000260	discard	# Pure vector search, no logic
+discarded	0.600000	13.3	0.000274	discard	# BM25 baseline with top 50

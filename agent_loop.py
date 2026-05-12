@@ -51,18 +51,24 @@ def is_improvement(new, best, objective):
         return new["llm_cost_usd"] < best["llm_cost_usd"]
 
     elif objective == "pareto":
-        # Keep only if better on at least one axis, worse on none
-        better_on_one = (
-            new["recall"]       >  best["recall"]       or
-            new["latency_ms"]   <  best["latency_ms"]   or
-            new["llm_cost_usd"] <  best["llm_cost_usd"]
+        # Recall must never drop — it's the primary objective
+        if new["recall"] < best["recall"]:
+            return False
+
+        # Latency must not get significantly worse — 10% slack allowed
+        if new["latency_ms"] > best["latency_ms"] * 1.10:
+            return False
+
+        # Cost guardrail — reject if LLM cost more than doubles
+        # (guards against bloated prompts, not a hard optimization target)
+        if new["llm_cost_usd"] > best["llm_cost_usd"] * 2.0 and best["llm_cost_usd"] > 0:
+            return False
+
+        # Keep if recall improved OR latency improved without violating above
+        return (
+            new["recall"]     > best["recall"] or
+            new["latency_ms"] < best["latency_ms"]
         )
-        worse_on_none = (
-            new["recall"]       >= best["recall"]       and
-            new["latency_ms"]   <= best["latency_ms"]   and
-            new["llm_cost_usd"] <= best["llm_cost_usd"]
-        )
-        return better_on_one and worse_on_none
 
     return False
 
@@ -426,6 +432,7 @@ Which changes actually moved the needle, and what failed. Be specific.
 |--------|----------|-------|
 | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
 | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
+| llm_cost_usd  | {baseline_metrics['llm_cost_usd']:.6f} | {best_metrics['llm_cost_usd']:.6f} |
 
 ## How to run
 ```bash

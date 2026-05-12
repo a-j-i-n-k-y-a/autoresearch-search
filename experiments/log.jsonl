@@ -1174,3 +1174,731 @@
   "description": "# Weighted BM25 and vector search"
 }
 
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-12T09:41:12",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 20.1629638671875,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-12T09:41:20",
+  "prompt_hash": "c21b4dd6",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, 100)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    combined_scores = np.zeros(len(df))\n    combined_scores[faiss_idx[0]] += 0.5\n    combined_scores += (bm25_scores / (np.max(bm25_scores) + 1e-6)) * 0.5\n    \n    top_idx = np.argsort(combined_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 81.6946029663086,
+    "llm_cost_usd": 0.000233
+  },
+  "status": "discard",
+  "description": "# Hybrid search with BM25 and Faiss"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-12T09:41:26",
+  "prompt_hash": "8ea18a79",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    # Boost by popularity/rating\n    scores = scores * (1 + 0.1 * df[\"vote_average\"].values)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 14.56460952758789,
+    "llm_cost_usd": 0.000205
+  },
+  "status": "discard",
+  "description": "# Boost BM25 with vote_average"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-12T09:41:33",
+  "prompt_hash": "32775634",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    scores = bm25.get_scores(query_tokens)\n    \n    # Boost scores if query terms appear in the title\n    title_boost = df['title'].str.lower().apply(lambda x: sum(t in x for t in query_tokens))\n    scores += title_boost.values * 0.5\n    \n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 35.07356643676758,
+    "llm_cost_usd": 0.000223
+  },
+  "status": "discard",
+  "description": "# BM25 title weight boost"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-12T09:41:40",
+  "prompt_hash": "222d30a0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    # Normalize BM25 and boost with log-scaled vote_count to favor popular items\n    boost = np.log1p(df[\"vote_count\"].values) * 0.1\n    top_idx = np.argsort(scores + boost)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 14.208173751831055,
+    "llm_cost_usd": 0.000221
+  },
+  "status": "discard",
+  "description": "# BM25 and weighted vote score"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-12T09:41:47",
+  "prompt_hash": "c8d7bbb3",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\", \"genres\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 15.911245346069336,
+    "llm_cost_usd": 0.000209
+  },
+  "status": "discard",
+  "description": "# BM25 over concatenated text fields"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-12T09:41:54",
+  "prompt_hash": "bbe2b463",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_lower = query.lower()\n    scores = bm25.get_scores(query_lower.split())\n    \n    # Simple genre filter boost\n    for i, genre in enumerate(df[\"genres\"]):\n        if isinstance(genre, str) and genre.lower() in query_lower:\n            scores[i] += 2.0\n            \n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 21.334171295166016,
+    "llm_cost_usd": 0.000235
+  },
+  "status": "discard",
+  "description": "# Filter by genre keywords"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-12T09:42:00",
+  "prompt_hash": "da13db1e",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, top_idx = index.search(vec, top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 10.570430755615234,
+    "llm_cost_usd": 0.000214
+  },
+  "status": "discard",
+  "description": "# Vector-only search with Faiss"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-12T09:42:08",
+  "prompt_hash": "f775f818",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.035964965820312,
+    "llm_cost_usd": 0.000223
+  },
+  "status": "discard",
+  "description": "# BM25 over title field only"
+}
+
+{
+  "exp_id": "exp_009",
+  "timestamp": "2026-05-12T09:42:16",
+  "prompt_hash": "622eb67f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    scores = bm25.get_scores(query.lower().split())\n    norm_scores = (scores - scores.min()) / (scores.max() - scores.min() + 1e-9)\n    boosted = norm_scores + 0.1 * (df[\"vote_average\"].fillna(0) / 10.0)\n    top_idx = np.argsort(boosted)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 12.590980529785156,
+    "llm_cost_usd": 0.000252
+  },
+  "status": "discard",
+  "description": "# Soft-normalize BM25 with vote_average"
+}
+
+{
+  "exp_id": "exp_010",
+  "timestamp": "2026-05-12T09:42:22",
+  "prompt_hash": "785f22cb",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    scores = bm25.get_scores(query.lower().split())\n    top_idx = np.argpartition(scores, -top_k)[-top_k:]\n    top_idx = top_idx[np.argsort(scores[top_idx])][::-1]\n    return df.iloc[top_idx].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.74001693725586,
+    "llm_cost_usd": 0.00024
+  },
+  "status": "discard",
+  "description": "# Simple BM25 over concatenated title and overview"
+}
+
+{
+  "exp_id": "exp_011",
+  "timestamp": "2026-05-12T09:42:29",
+  "prompt_hash": "57bfb530",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, top_idx = index.search(vec, 100)\n    top_idx = top_idx[0]\n    \n    subset = df.iloc[top_idx]\n    bm25_scores = bm25.get_scores(query.lower().split())\n    final_scores = [bm25_scores[i] for i in top_idx]\n    \n    combined = np.argsort(final_scores)[-top_k:][::-1]\n    return subset.iloc[combined][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 24.222421646118164,
+    "llm_cost_usd": 0.000268
+  },
+  "status": "discard",
+  "description": "# Vector search with BM25 reranking"
+}
+
+{
+  "exp_id": "exp_012",
+  "timestamp": "2026-05-12T09:42:36",
+  "prompt_hash": "b4e4087b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, top_idx = index.search(vec, 100)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    \n    query_lower = query.lower()\n    genre_bonus = candidates[\"genres\"].apply(lambda x: 0.1 if any(g.lower() in query_lower for g in x.split(\", \")) else 0.0)\n    \n    final_scores = genre_bonus\n    top_indices = candidates.index[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    return df.loc[top_indices][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 9.986400604248047,
+    "llm_cost_usd": 0.000277
+  },
+  "status": "discard",
+  "description": "# Vector search with genre bias"
+}
+
+{
+  "exp_id": "exp_013",
+  "timestamp": "2026-05-12T09:42:43",
+  "prompt_hash": "711bb326",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    \n    # Normalize scores and boost by popularity\n    scores = (scores - np.min(scores)) / (np.max(scores) - np.min(scores) + 1e-9)\n    pop = df[\"vote_average\"].values / 10.0\n    final_scores = scores + (0.1 * pop)\n    \n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 14.671802520751953,
+    "llm_cost_usd": 0.000271
+  },
+  "status": "discard",
+  "description": "# Boost top BM25 with normalized votes"
+}
+
+{
+  "exp_id": "exp_014",
+  "timestamp": "2026-05-12T09:42:50",
+  "prompt_hash": "fce90e7e",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(vec, 100)\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    combined = np.zeros(len(df))\n    combined[faiss_idx[0]] = np.linspace(1.0, 0.1, 100)\n    combined += (bm25_scores / (bm25_scores.max() + 1e-6))\n    \n    top_idx = np.argsort(combined)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 26.356029510498047,
+    "llm_cost_usd": 0.000281
+  },
+  "status": "discard",
+  "description": "# BM25 and vector score fusion"
+}
+
+{
+  "exp_id": "exp_015",
+  "timestamp": "2026-05-12T09:42:57",
+  "prompt_hash": "2868fccf",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(query.lower().split())\n    bm25_idx = np.argsort(bm25_scores)[-100:]\n    \n    ranks = {}\n    for i, idx in enumerate(faiss_idx[0]):\n        ranks[idx] = ranks.get(idx, 0) + 1.0 / (i + 1.0)\n    for i, idx in enumerate(bm25_idx):\n        ranks[idx] = ranks.get(idx, 0) + 1.0 / (i + 1.0)\n        \n    top_idx = sorted(ranks, key=ranks.get, reverse=True)[:top_k]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 25.66542625427246,
+    "llm_cost_usd": 0.000306
+  },
+  "status": "discard",
+  "description": "# Weighted BM25 and vector RRF"
+}
+
+{
+  "exp_id": "exp_016",
+  "timestamp": "2026-05-12T09:43:04",
+  "prompt_hash": "e22b92ef",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    # Assuming df.text is constructed as title + \" \" + overview\n    # Trying pure title focus in BM25\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.660001754760742,
+    "llm_cost_usd": 0.000253
+  },
+  "status": "discard",
+  "description": "# BM25 over title field only"
+}
+
+{
+  "exp_id": "exp_017",
+  "timestamp": "2026-05-12T09:43:11",
+  "prompt_hash": "8049c7b0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, 100)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    bm25_idx = np.argsort(bm25_scores)[-100:]\n    \n    combined_scores = {}\n    for i, idx in enumerate(faiss_idx[0]):\n        combined_scores[idx] = combined_scores.get(idx, 0) + 1 / (10 + i + 1)\n    for i, idx in enumerate(bm25_idx):\n        combined_scores[idx] = combined_scores.get(idx, 0) + 1 / (10 + i + 1)\n        \n    top_idx = sorted(combined_scores, key=combined_scores.get, reverse=True)[:top_k]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 22.014188766479492,
+    "llm_cost_usd": 0.000314
+  },
+  "status": "discard",
+  "description": "# Weighted RRF on title/overview"
+}
+
+{
+  "exp_id": "exp_018",
+  "timestamp": "2026-05-12T09:43:18",
+  "prompt_hash": "e1574459",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    \n    # Boost by log-normalized popularity to break ties/surface quality\n    boost = np.log1p(df[\"vote_count\"].fillna(0))\n    boost = (boost - boost.min()) / (boost.max() - boost.min() + 1e-9)\n    final_scores = scores + (boost * 0.5)\n    \n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 22.243833541870117,
+    "llm_cost_usd": 0.000278
+  },
+  "status": "discard",
+  "description": "# Log-normalized vote count boost"
+}
+
+{
+  "exp_id": "exp_019",
+  "timestamp": "2026-05-12T09:43:25",
+  "prompt_hash": "147993fc",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.903236389160156,
+    "llm_cost_usd": 0.000245
+  },
+  "status": "discard",
+  "description": "# BM25 over genres and title"
+}
+
+{
+  "exp_id": "exp_020",
+  "timestamp": "2026-05-12T09:43:32",
+  "prompt_hash": "7970a045",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, top_k * 5)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    candidates = faiss_idx[0]\n    final_scores = []\n    for idx in candidates:\n        score = bm25_scores[idx] + 0.5\n        final_scores.append(score)\n        \n    top_idx = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 27.01096534729004,
+    "llm_cost_usd": 0.000286
+  },
+  "status": "discard",
+  "description": "# Hybrid search with BM25+Faiss"
+}
+
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-12T09:52:14",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 14.607000350952148,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-12T09:52:22",
+  "prompt_hash": "b32327a6",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(query.lower().split())\n    bm25_idx = np.argsort(bm25_scores)[-100:]\n    \n    ranks = {}\n    for i, idx in enumerate(faiss_idx[0]):\n        ranks[idx] = ranks.get(idx, 0) + 1.0 / (i + 11)\n    for i, idx in enumerate(bm25_idx):\n        ranks[idx] = ranks.get(idx, 0) + 1.0 / (100 - i + 10)\n        \n    top_idx = sorted(ranks, key=ranks.get, reverse=True)[:top_k]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 80.96914291381836,
+    "llm_cost_usd": 0.000254
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and Faiss RRF"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-12T09:52:29",
+  "prompt_hash": "a00642cf",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    boosted_scores = scores * (1 + 0.1 * df[\"vote_average\"].fillna(0))\n    top_idx = np.argsort(boosted_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 15.830230712890625,
+    "llm_cost_usd": 0.000204
+  },
+  "status": "discard",
+  "description": "Boost BM25 with vote_average"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-12T09:52:36",
+  "prompt_hash": "d494037d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # BM25 scores\n    b_scores = bm25.get_scores(query.lower().split())\n    b_norm = (b_scores - np.min(b_scores)) / (np.max(b_scores) - np.min(b_scores) + 1e-9)\n    \n    # Faiss scores\n    vec = model.encode([query])\n    f_scores, _ = index.search(vec.astype(\"float32\"), top_k * 5)\n    f_scores = 1.0 / (1.0 + f_scores[0])\n    f_norm = (f_scores - np.min(f_scores)) / (np.max(f_scores) - np.min(f_scores) + 1e-9)\n    \n    # Combined ranking\n    combined = b_norm + np.interp(np.arange(len(b_scores)), np.linspace(0, len(b_scores), len(f_scores)), f_norm)\n    top_idx = np.argsort(combined)[-top_k:][::-1]\n    \n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 24.611377716064453,
+    "llm_cost_usd": 0.000284
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and Faiss using Min-Max scaling"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-12T09:52:43",
+  "prompt_hash": "a308680b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    base_scores = bm25.get_scores(query_tokens)\n    \n    # Boost matches in the title column\n    title_matches = df['title'].str.lower().str.contains('|'.join(query_tokens), na=False).astype(float)\n    \n    scores = base_scores + (title_matches * np.mean(base_scores) * 2.0)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    \n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.4,
+    "latency_ms": 15.572786331176758,
+    "llm_cost_usd": 0.000235
+  },
+  "status": "discard",
+  "description": "Boost BM25 with Title weight"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-12T09:52:49",
+  "prompt_hash": "eedc90e4",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 10.80322265625,
+    "llm_cost_usd": 0.000202
+  },
+  "status": "keep",
+  "description": "# Vector search only"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-12T09:52:57",
+  "prompt_hash": "c89590d0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 5)\n    candidates = df.iloc[top_idx[0]].copy()\n    \n    # Simple genre boost if query mentions genre keywords\n    q_low = query.lower()\n    for genre in ['action', 'comedy', 'drama', 'horror', 'romance', 'sci-fi', 'thriller']:\n        if genre in q_low:\n            candidates['score'] = candidates['genres'].apply(lambda x: 1.1 if genre in x.lower() else 1.0)\n            candidates = candidates.sort_values('score', ascending=False)\n            break\n            \n    return candidates.iloc[:top_k][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.287975311279297,
+    "llm_cost_usd": 0.00026
+  },
+  "status": "discard",
+  "description": "# Vector search with genre bias"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-12T09:53:04",
+  "prompt_hash": "4b16b8c9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    # Fetch a larger candidate pool to improve precision\n    _, top_idx = index.search(vec.astype(\"float32\"), 100)\n    \n    # Filter candidates by vote count to prioritize popular/verified entries\n    candidates = df.iloc[top_idx[0]]\n    ranked = candidates.sort_values(by=\"vote_count\", ascending=False)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 10.144615173339844,
+    "llm_cost_usd": 0.000238
+  },
+  "status": "keep",
+  "description": "# Vector search with top-100 reranking"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-12T09:53:10",
+  "prompt_hash": "dfb4597a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 10.651397705078125,
+    "llm_cost_usd": 0.000223
+  },
+  "status": "discard",
+  "description": "# Simple vector search only"
+}
+
+{
+  "exp_id": "exp_009",
+  "timestamp": "2026-05-12T09:53:17",
+  "prompt_hash": "b3678673",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), 50)\n    candidates = df.iloc[top_idx[0]].copy()\n    candidates[\"score\"] = np.log1p(candidates[\"vote_count\"])\n    ranked = candidates.sort_values(by=\"score\", ascending=False)\n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 33.436012268066406,
+    "llm_cost_usd": 0.00025
+  },
+  "status": "discard",
+  "description": "Vector search with log-normalized vote_count"
+}
+
+{
+  "exp_id": "exp_010",
+  "timestamp": "2026-05-12T09:53:24",
+  "prompt_hash": "e1de54af",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), 50)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    # Boost by vote_average while keeping latency low\n    candidates[\"score\"] = 1.0 / (1.0 + candidates.index.get_indexer(top_idx[0]))\n    candidates[\"final_score\"] = candidates[\"score\"] * (1 + candidates[\"vote_average\"] / 10)\n    \n    ranked = candidates.sort_values(by=\"final_score\", ascending=False)\n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 8.380556106567383,
+    "llm_cost_usd": 0.000277
+  },
+  "status": "discard",
+  "description": "Vector search with vote_average boost"
+}
+
+{
+  "exp_id": "exp_011",
+  "timestamp": "2026-05-12T09:53:31",
+  "prompt_hash": "064da451",
+  "search_py": "import numpy as np\nfrom sklearn.preprocessing import minmax_scale\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    dists, top_idx = index.search(vec.astype(\"float32\"), 50)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    \n    vec_scores = minmax_scale(1.0 / (1.0 + dists[0]))\n    bm25_scores = minmax_scale(bm25.get_scores(query.lower().split())[top_idx[0]])\n    \n    candidates[\"score\"] = 0.6 * vec_scores + 0.4 * bm25_scores\n    return candidates.sort_values(by=\"score\", ascending=False).head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 25.707006454467773,
+    "llm_cost_usd": 0.000287
+  },
+  "status": "discard",
+  "description": "# Combine vector and BM25 scores"
+}
+
+{
+  "exp_id": "exp_012",
+  "timestamp": "2026-05-12T09:53:38",
+  "prompt_hash": "b3997a04",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    dist, idx = index.search(vec, 200)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    scores = np.zeros(len(df))\n    scores[idx[0]] = 1.0 - (dist[0] / (dist[0].max() + 1e-6))\n    \n    combined = (scores + (bm25_scores / (bm25_scores.max() + 1e-6))) / 2\n    \n    top_idx = np.argsort(combined)[::-1][:top_k]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 25.270605087280273,
+    "llm_cost_usd": 0.000287
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and Faiss scaling"
+}
+
+{
+  "exp_id": "exp_013",
+  "timestamp": "2026-05-12T09:53:46",
+  "prompt_hash": "4e7d4387",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    vec = model.encode([query])\n    dists, top_idx = index.search(vec.astype(\"float32\"), 50)\n    \n    candidate_idx = top_idx[0]\n    scores = -dists[0]\n    norm_scores = (scores - scores.min()) / (scores.max() - scores.min() + 1e-9)\n    \n    bm25_subset = bm25_scores[candidate_idx]\n    norm_bm25 = (bm25_subset - bm25_subset.min()) / (bm25_subset.max() - bm25_subset.min() + 1e-9)\n    \n    final_scores = norm_scores + norm_bm25\n    ranked_idx = candidate_idx[np.argsort(-final_scores)]\n    \n    return df.iloc[ranked_idx[:top_k]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 22.818613052368164,
+    "llm_cost_usd": 0.000318
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and Faiss reranking"
+}
+
+{
+  "exp_id": "exp_014",
+  "timestamp": "2026-05-12T09:53:52",
+  "prompt_hash": "4f1ee5d0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    vec = model.encode([query])\n    _, faiss_idx = index.search(vec.astype(\"float32\"), 50)\n    \n    # Normalize BM25 and Faiss\n    faiss_scores = np.zeros(len(df))\n    faiss_scores[faiss_idx[0]] = 1 - (np.arange(50) / 50)\n    \n    # Combined score\n    total_scores = bm25_scores + faiss_scores\n    top_indices = np.argsort(total_scores)[::-1][:top_k]\n    \n    return df.iloc[top_indices][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 22.984600067138672,
+    "llm_cost_usd": 0.000294
+  },
+  "status": "discard",
+  "description": "# BM25 title and overview hybrid"
+}
+
+{
+  "exp_id": "exp_015",
+  "timestamp": "2026-05-12T09:53:59",
+  "prompt_hash": "8812b36e",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    vec = model.encode([query])\n    dists, top_idx = index.search(vec.astype(\"float32\"), 500)\n    \n    rrf_scores = np.zeros(len(df))\n    rrf_scores[top_idx[0]] += 1.0 / (1.0 + np.arange(500) + 60)\n    rrf_scores += 1.0 / (1.0 + 500 - np.argsort(np.argsort(bm25_scores)) + 60)\n    \n    result_idx = np.argsort(-rrf_scores)[:top_k]\n    return df.iloc[result_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 24.210166931152344,
+    "llm_cost_usd": 0.000301
+  },
+  "status": "discard",
+  "description": "# RRF with BM25 and Faiss"
+}
+
+{
+  "exp_id": "exp_016",
+  "timestamp": "2026-05-12T09:54:06",
+  "prompt_hash": "03ce0647",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    dist, top_idx = index.search(vec.astype(\"float32\"), 50)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    # Normalize distances (L2 is distance, lower is better)\n    scores = 1 / (1 + dist[0])\n    # Boost by vote_average (0 to 10 scale)\n    candidates[\"rank_score\"] = scores * (1 + 0.1 * candidates[\"vote_average\"])\n    \n    return candidates.sort_values(by=\"rank_score\", ascending=False).head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 11.018610000610352,
+    "llm_cost_usd": 0.000283
+  },
+  "status": "discard",
+  "description": "# Combine vector search with normalized vote_average"
+}
+
+{
+  "exp_id": "exp_017",
+  "timestamp": "2026-05-12T09:54:13",
+  "prompt_hash": "27182740",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    dist, idx = index.search(vec.astype(\"float32\"), top_k)\n    return df.iloc[idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.249637603759766,
+    "llm_cost_usd": 0.000242
+  },
+  "status": "discard",
+  "description": "# Pure vector search, optimized retrieval"
+}
+
+{
+  "exp_id": "exp_018",
+  "timestamp": "2026-05-12T09:54:20",
+  "prompt_hash": "7e5cd0f5",
+  "search_py": "import numpy as np\nfrom sklearn.preprocessing import MinMaxScaler\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = np.array(bm25.get_scores(query_tokens))\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), 50)\n    \n    indices = top_idx[0]\n    vec_scores = np.zeros(len(df))\n    # Normalize Faiss L2 distance to similarity score 0-1\n    dists = np.array([index.d[0][i] for i in range(len(indices))])\n    vec_scores[indices] = 1 / (1 + dists)\n    \n    scaler = MinMaxScaler()\n    bm25_norm = scaler.fit_transform(bm25_scores.reshape(-1, 1)).flatten()\n    vec_norm = scaler.fit_transform(vec_scores.reshape(-1, 1)).flatten()\n    \n    combined = 0.4 * bm25_norm + 0.6 * vec_norm\n    top_k_idx = np.argsort(combined)[::-1][:top_k]\n    \n    return df.iloc[top_k_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.00034
+  },
+  "status": "crash",
+  "description": "Hybrid BM25 and vector search."
+}
+
+{
+  "exp_id": "exp_019",
+  "timestamp": "2026-05-12T09:54:27",
+  "prompt_hash": "cfa90cc5",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 5)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    \n    # Genre boost: simple match check\n    query_lower = query.lower()\n    candidates['genre_boost'] = candidates['genres'].apply(\n        lambda g: 1.2 if any(word in g.lower() for word in query_lower.split()) else 1.0\n    )\n    \n    candidates['score'] = candidates['vote_count'].rank(pct=True) * candidates['genre_boost']\n    ranked = candidates.sort_values(by=\"score\", ascending=False)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 10.939598083496094,
+    "llm_cost_usd": 0.000316
+  },
+  "status": "keep",
+  "description": "Vector search with boosted genres"
+}
+
+{
+  "exp_id": "exp_020",
+  "timestamp": "2026-05-12T09:54:34",
+  "prompt_hash": "b2923b2a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 10)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    \n    # Use vote_average and count to boost relevance\n    # Boost by genre match, log-scaled vote_count to prevent runaway bias\n    query_words = set(query.lower().split())\n    candidates['genre_boost'] = candidates['genres'].apply(\n        lambda g: 1.5 if any(w in g.lower() for w in query_words) else 1.0\n    )\n    \n    # Combine vote metrics for scoring\n    score = (candidates['vote_average'] * np.log1p(candidates['vote_count'])) * candidates['genre_boost']\n    \n    candidates['final_score'] = score\n    ranked = candidates.sort_values(by=\"final_score\", ascending=False)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 12.52140998840332,
+    "llm_cost_usd": 0.000345
+  },
+  "status": "discard",
+  "description": "# Weighted genre and vote search"
+}
+
+{
+  "exp_id": "exp_021",
+  "timestamp": "2026-05-12T09:54:41",
+  "prompt_hash": "f1cb991d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    # Increase candidate pool for better reranking\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 10)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    \n    # Use log-normalized vote_count to favor popular results\n    # Use vote_average to favor quality results\n    candidates['score'] = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    \n    ranked = candidates.sort_values(by=\"score\", ascending=False)\n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 10.615396499633789,
+    "llm_cost_usd": 0.000311
+  },
+  "status": "discard",
+  "description": "Vector search with vote popularity"
+}
+
+{
+  "exp_id": "exp_022",
+  "timestamp": "2026-05-12T09:54:48",
+  "prompt_hash": "6278fe56",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 10)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    c_bm25 = bm25_scores[top_idx[0]]\n    \n    # Normalize and combine\n    c_vec = 1.0 - (np.arange(len(top_idx[0])) / (top_k * 10))\n    c_bm25 = (c_bm25 - c_bm25.min()) / (c_bm25.max() - c_bm25.min() + 1e-6)\n    \n    candidates['score'] = (c_vec * 0.7) + (c_bm25 * 0.3)\n    return candidates.sort_values(by=\"score\", ascending=False).head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 22.56479263305664,
+    "llm_cost_usd": 0.000355
+  },
+  "status": "discard",
+  "description": "# Combine vector similarity and BM25"
+}
+
+{
+  "exp_id": "exp_023",
+  "timestamp": "2026-05-12T09:54:55",
+  "prompt_hash": "abba6868",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    vec = model.encode([query])\n    distances, top_idx = index.search(vec.astype(\"float32\"), 100)\n    \n    candidate_indices = top_idx[0]\n    \n    vec_scores = 1.0 / (1.0 + distances[0])\n    bm25_vals = bm25_scores[candidate_indices]\n    \n    # Normalize scores\n    vec_norm = (vec_scores - vec_scores.min()) / (vec_scores.max() - vec_scores.min() + 1e-6)\n    bm25_norm = (bm25_vals - bm25_vals.min()) / (bm25_vals.max() - bm25_vals.min() + 1e-6)\n    \n    final_scores = 0.6 * vec_norm + 0.4 * bm25_norm\n    \n    results = df.iloc[candidate_indices].copy()\n    results['final_score'] = final_scores\n    ranked = results.sort_values(by=\"final_score\", ascending=False)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 23.88896942138672,
+    "llm_cost_usd": 0.000376
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and vector ranking"
+}
+
+{
+  "exp_id": "exp_024",
+  "timestamp": "2026-05-12T09:55:02",
+  "prompt_hash": "4142ff2a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Use index.search (which is L2) but convert to cosine similarity\n    # Since L2^2 = 2 - 2 * dot_product (for normalized vectors),\n    # lower L2 is higher cosine similarity.\n    distances, top_idx = index.search(query_vec, top_k * 10)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    candidates['dist'] = distances[0]\n    \n    # Sort by L2 distance (ascending is better)\n    ranked = candidates.sort_values(by=\"dist\", ascending=True)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.930418014526367,
+    "llm_cost_usd": 0.000322
+  },
+  "status": "discard",
+  "description": "# Vector search with cosine similarity"
+}
+
+{
+  "exp_id": "exp_025",
+  "timestamp": "2026-05-12T09:55:09",
+  "prompt_hash": "1d6f3059",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    dists, top_idx = index.search(vec.astype(\"float32\"), top_k * 20)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    candidates['dist'] = dists[0]\n    \n    # Use vote_average to break ties in semantic distance\n    candidates['score'] = (1.0 / (1.0 + candidates['dist'])) + (candidates['vote_average'] * 0.05)\n    \n    ranked = candidates.sort_values(by=\"score\", ascending=False)\n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 12.745189666748047,
+    "llm_cost_usd": 0.000316
+  },
+  "status": "discard",
+  "description": "# Vector search with L2 reranking"
+}
+
+{
+  "exp_id": "exp_026",
+  "timestamp": "2026-05-12T09:55:17",
+  "prompt_hash": "27d9457c",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 10)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    \n    # Normalize vote_average to [0, 1] range to avoid overwhelming vector score\n    v_avg = (candidates['vote_average'] - candidates['vote_average'].min()) / (candidates['vote_average'].max() - candidates['vote_average'].min() + 1e-6)\n    \n    # Combine with inverse L2 distance (which is already in top_idx)\n    # Lower L2 is better, so we use (1 / (1 + dist))\n    candidates['score'] = v_avg * 0.2\n    \n    ranked = candidates.sort_values(by=\"score\", ascending=False)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.4,
+    "latency_ms": 11.316823959350586,
+    "llm_cost_usd": 0.000341
+  },
+  "status": "discard",
+  "description": "# Boost candidates using vote_average"
+}
+
+{
+  "exp_id": "exp_027",
+  "timestamp": "2026-05-12T09:55:24",
+  "prompt_hash": "ba52b91b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    distances, top_idx = index.search(vec.astype(\"float32\"), top_k * 10)\n    \n    candidates = df.iloc[top_idx[0]].copy()\n    candidates['dist'] = distances[0]\n    \n    # Use L2 distance (lower is better) and normalize vote_count\n    # Invert distances to turn into a similarity score\n    candidates['score'] = (1.0 / (1.0 + candidates['dist'])) * (1.0 + np.log1p(candidates['vote_count']) * 0.1)\n    \n    ranked = candidates.sort_values(by=\"score\", ascending=False)\n    \n    return ranked.head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 8.042573928833008,
+    "llm_cost_usd": 0.000327
+  },
+  "status": "discard",
+  "description": "# Vector search with L2 distance ranking"
+}
+
+{
+  "exp_id": "exp_028",
+  "timestamp": "2026-05-12T09:55:30",
+  "prompt_hash": "c06b06c0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.69443130493164,
+    "llm_cost_usd": 0.000276
+  },
+  "status": "discard",
+  "description": "# Simplify to pure vector search"
+}
+
+{
+  "exp_id": "exp_029",
+  "timestamp": "2026-05-12T09:55:36",
+  "prompt_hash": "ad89d332",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.983013153076172,
+    "llm_cost_usd": 0.00026
+  },
+  "status": "discard",
+  "description": "# Pure vector search, no logic"
+}
+
+{
+  "exp_id": "exp_030",
+  "timestamp": "2026-05-12T09:55:43",
+  "prompt_hash": "b231d0b3",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    top_idx = np.argsort(bm25_scores)[-50:][::-1]\n    \n    return df.iloc[top_idx].head(top_k)[[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.285636901855469,
+    "llm_cost_usd": 0.000274
+  },
+  "status": "discard",
+  "description": "# BM25 baseline with top 50"
+}
+
