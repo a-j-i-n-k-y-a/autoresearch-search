@@ -1,28 +1,31 @@
 # Architecture
 
 ## What it does
-The system combines two search methods to find movies: keyword matching (for exact terms) and meaning-based matching (for conceptual relationships). It retrieves a set of potential matches from both methods, calculates a score for each based on their relevance and popularity, and returns the top 10 results.
+The system performs a semantic search by converting user queries into numerical representations (vectors) to find similar movies. It then refines the results by boosting movies that match the requested genre and prioritizing popular titles based on their total vote counts.
 
 ## Components
-- **BM25Okapi:** Performs keyword-based retrieval to capture explicit search terms.
-- **FAISS (Vector Search):** Uses a pre-trained model to encode queries and documents into vectors, allowing for semantic retrieval that understands synonyms and context.
-- **Popularity Boost:** A multiplier derived from `vote_average` and `vote_count` that prioritizes highly-rated, well-known movies to refine the final ranking.
+- **FAISS Index:** A high-speed similarity search engine that narrows down a massive library of movies to a small set of semantic matches.
+- **Sentence Transformer Model:** Converts raw text queries into vectors that capture the intent and context of a search.
+- **Pandas DataFrame:** Serves as the metadata store, holding genres and popularity (vote count) statistics used for final ranking.
+- **Genre/Popularity Re-ranker:** A post-processing logic layer that applies a multiplier to the ranking score if a movie matches the user's requested genre, and weights results by popularity.
 
 ## Why it works
-The design balances precision and speed. By pre-calculating vector embeddings, the system performs "approximate" searches in milliseconds. The hybrid approach mitigates the weaknesses of each individual method: BM25 finds exact matches that vector search might miss, while vector search identifies relevant results where the exact keywords don't appear. Scaling by popularity ensures that the highest-quality, most relevant content surfaces at the top of the result list.
+By using FAISS for the initial retrieval, the system achieves instant matching across thousands of entries. The "genre boost" acts as a heuristic filter that aligns semantic results with user expectations, while the popularity-based ranking ensures that highly-rated or widely-watched movies occupy top positions, effectively balancing intent with authority.
 
 ## Tradeoffs
-To achieve a high recall while maintaining low latency, we sacrificed exhaustive scoring. Instead of scoring the entire database, we retrieve a smaller, high-confidence candidate pool from both search methods and limit calculations to this subset. This "pruning" is why we maintained a $0.000435$ cost while significantly improving performance.
+The architecture prioritizes **Recall** above all else. During optimization, complex hybrid methods (like combining BM25 and FAISS) often introduced latency or logic errors that degraded search quality. By opting for a clean, vector-first approach with simple metadata boosting, the system maintains consistent performance without the cost or complexity of multi-stage retrieval.
 
 ## Key experiments
-- **Major Wins:** Removing redundant heavy computations and focusing on an efficient "Candidate-then-Boost" pipeline improved recall from 0.6 to 0.8 while cutting latency by over 85%.
-- **Failed Attempts:** Attempts to integrate genre-based matching consistently resulted in system crashes or decreased recall, likely due to index mapping errors or over-constraining the search space. Complex Reciprocal Rank Fusion (RRF) approaches were discarded as they provided similar recall to the final logic but at a higher latency cost.
+- **Failures:** Most attempts to integrate BM25 (keyword search) resulted in a lower recall (dropping from 0.8 to 0.6) and increased cost, suggesting that the semantic model already captures sufficient keyword intent.
+- **Successes:** Simple FAISS retrieval consistently outperformed more complex multi-step fusions. Experiments involving score scaling (Min-Max) improved recall to 0.7, but could not surpass the original baseline performance of 0.8.
+- **Crashes:** Attempts to perform heavy mathematical combinations of scores (e.g., product of BM25 and FAISS scores) led to runtime crashes, highlighting the stability of the current implementation.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.600 | 0.800 |
-| latency_ms | 169.5 | 25.2 |
+| recall@10 | 0.800 | 0.800 |
+| latency_ms | 54.6 | 54.6 |
+| llm_cost_usd | 0.000000 | 0.000000 |
 
 ## How to run
 ```bash
