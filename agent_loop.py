@@ -12,18 +12,18 @@ from prepare import load_resources, evaluate, BENCHMARK_QUERIES
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL        = "llama-3.3-70b-versatile"
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+MODEL          = "gemini-3.1-flash-lite"
 
 client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
+    api_key=GOOGLE_API_KEY,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 # ─── LLM COST ───────────────────────────────────────────────
-# Groq llama-3.3-70b pricing (per 1k tokens)
-COST_PER_1K_INPUT  = 0.00059
-COST_PER_1K_OUTPUT = 0.00079
+# Google Gemini 3.1 Flash-Lite pricing (per 1k tokens)
+COST_PER_1K_INPUT  = 0.000100
+COST_PER_1K_OUTPUT = 0.000400
 
 def get_llm_cost(response):
     input_tokens  = response.usage.prompt_tokens
@@ -138,7 +138,8 @@ def save_prompt(prompt):
 def save_experiment(exp_id, prompt, search_py, metrics, status, description):
     """
     Save experiment record to experiments/log.jsonl.
-    Prompt stored separately by hash — log line stays tiny (~400 bytes).
+    Prompt stored separately by hash — log line stays small.
+    Records are pretty-printed and separated by blank lines for readability.
     """
     os.makedirs("experiments", exist_ok=True)
 
@@ -154,22 +155,39 @@ def save_experiment(exp_id, prompt, search_py, metrics, status, description):
         "description": description,
     }
     with open("experiments/log.jsonl", "a") as f:
-        f.write(json.dumps(record, indent = 2) + "\n\n")
+        f.write(json.dumps(record, indent=2) + "\n\n")
+
+def load_experiments():
+    """
+    Load all experiment records from log.jsonl.
+    Handles pretty-printed multi-line JSON records separated by blank lines.
+    """
+    log_path = "experiments/log.jsonl"
+    if not os.path.exists(log_path):
+        return []
+
+    records = []
+    with open(log_path) as f:
+        content = f.read()
+
+    # Split on double newlines to get individual JSON blobs
+    for chunk in content.strip().split("\n\n"):
+        chunk = chunk.strip()
+        if chunk:
+            try:
+                records.append(json.loads(chunk))
+            except json.JSONDecodeError:
+                continue
+    return records
 
 def replay_experiment(exp_id):
     """Restore search.py from a saved experiment and re-run the benchmark."""
-    log_path = "experiments/log.jsonl"
-    if not os.path.exists(log_path):
+    records = load_experiments()
+    if not records:
         print("No experiments/log.jsonl found.")
         return
 
-    found = None
-    with open(log_path) as f:
-        for line in f:
-            record = json.loads(line)
-            if record["exp_id"] == exp_id:
-                found = record
-                break
+    found = next((r for r in records if r["exp_id"] == exp_id), None)
 
     if not found:
         print(f"Experiment {exp_id} not found in log.")
@@ -222,10 +240,71 @@ def format_history_entry(r):
         line += f"\n  ERROR:\n{r['traceback'][:500]}"
     return line
 
+def parse_agent_response(raw):
+    """
+    Robustly extract (description, code) from LLM response.
+
+    Handles all model response formats:
+      - "# DESCRIPTION: foo\\nimport numpy..."   (ideal)
+      - "Increase Candidate Pool\\n```python..."  (bare label + fences)
+      - "```python\\nimport numpy..."             (fences only)
+      - "import numpy..."                         (raw code, no label)
+    """
+    raw = raw.strip()
+
+    # ── Step 1: extract description from first line ──
+    lines = raw.split("\n")
+    first = lines[0].strip()
+
+    # Accept first line as description if it doesn't look like code or a fence
+    is_code_line = (
+        first.startswith("import")
+        or first.startswith("from")
+        or first.startswith("def ")
+        or first.startswith("class ")
+        or first.startswith("```")
+        or first.startswith("#!")
+    )
+
+    if not is_code_line and len(first) < 80:
+        description = first.replace("# DESCRIPTION:", "").strip()
+        raw         = "\n".join(lines[1:]).strip()
+    else:
+        description = "unlabeled experiment"
+
+    # ── Step 2: strip ALL markdown fences wherever they appear ──
+    lines = raw.split("\n")
+    lines = [l for l in lines if not l.strip().startswith("```")]
+    code  = "\n".join(lines).strip()
+
+    return description, code
+
 def ask_agent(program_md, search_py, history, objective):
     """Ask LLM for next search.py modification. Returns (code, cost, description, prompt)."""
 
     history_str = "\n".join([format_history_entry(r) for r in history[-10:]])
+
+    # ── Build anti-repetition context ──
+    # Everything already tried — injected into prompt so model can't ignore it
+    tried_descriptions = [
+        r['description'] for r in history
+        if r['description'] != "baseline"
+    ]
+    tried_str = "\n".join(f"  - {d}" for d in tried_descriptions) if tried_descriptions else "  (none yet)"
+
+    # Strategies already present in the current search.py
+    already_in_code = []
+    if "BM25Okapi(df['title']" in search_py or "title_bm25" in search_py:
+        already_in_code.append("Title-boosted BM25")
+    if "rrf" in search_py.lower() or "1 / (" in search_py:
+        already_in_code.append("Reciprocal Rank Fusion (RRF)")
+    if "vote_count" in search_py or "vote_average" in search_py:
+        already_in_code.append("Vote score boosting")
+    if "top_k * 1" in search_py:
+        already_in_code.append("Large candidate pool")
+    if "cosine" in search_py.lower():
+        already_in_code.append("Cosine similarity")
+    already_str = "\n".join(f"  - {s}" for s in already_in_code) if already_in_code else "  (none detected)"
 
     objective_guidance = {
         "recall":  "Maximize recall@10. Latency and cost are secondary.",
@@ -256,63 +335,52 @@ You are an autonomous research agent improving a movie search system.
 - latency_ms     — wall clock milliseconds per query
 - llm_cost_usd   — cost of this API call to generate the spec
 
-## Your task:
-Suggest ONE specific modification to search.py to improve the active objective.
-Think step by step. Avoid repeating crashed or discarded ideas.
+## ALREADY TRIED — do not repeat these experiments:
+{tried_str}
+If your idea is similar to any of the above, pick something different.
 
-ENVIRONMENT CONSTRAINTS — violations crash the run:
+## ALREADY IN THE CODE — do not re-add these, they are implemented:
+{already_str}
+Suggesting something already in the code wastes an experiment.
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- Can I add genres as a third BM25 signal alongside title and full text?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
 - Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
 - nltk is NOT installed — do not import it
 - Use int() or np.int64(), NEVER np.int (deprecated in modern numpy)
 - Do NOT import from other project files
-
-Promising strategies:
-- Reciprocal Rank Fusion (RRF): combine BM25 + FAISS by rank position, not raw scores
-- Larger candidate pool: top_k * 15 or * 20 before re-ranking
-- Title-boosted BM25: run BM25 on title field separately, merge results
-- Vote score boosting: weight final scores by log(vote_count) * vote_average from df
-- Pure BM25 only: skip embedding entirely — faster and cheaper
-- Cosine similarity: normalize vectors before FAISS scoring
 
 # DESCRIPTION: <5 words or less describing the change>
 Return the description line above FIRST, then immediately the raw Python code.
 No markdown fences. No explanation. Just the description comment then the code.
 """
 
-    response = call_api([{"role": "user", "content": prompt}])
-    cost     = get_llm_cost(response)
-    raw      = response.choices[0].message.content.strip()
-
-    # Strip markdown fences if model ignored instructions
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        raw   = "\n".join(lines).strip()
-
-    # Extract description from first line
-    lines = raw.split("\n")
-    if lines[0].startswith("# DESCRIPTION:"):
-        description = lines[0].replace("# DESCRIPTION:", "").strip()
-        code        = "\n".join(lines[1:]).strip()
-    else:
-        description = "unlabeled experiment"
-        code        = raw
+    response          = call_api([{"role": "user", "content": prompt}])
+    cost              = get_llm_cost(response)
+    raw               = response.choices[0].message.content.strip()
+    description, code = parse_agent_response(raw)
 
     return code, cost, description, prompt
 
 # ─── ARCHITECTURE DOCUMENTATION ─────────────────────────────
 def document_architecture(best_metrics, baseline_metrics, objective, n_experiments, history):
     """
-    Generate ARCHITECTURE.md explaining the final winning search implementation.
+    Generate ARCHITECTURE_<objective>.md explaining the final winning search.
     Called once at the end of the experiment loop.
     """
     print("\n📄 Documenting final architecture...")
 
-    search_py = read_file("search.py")
-
-    kept     = [r for r in history if r["status"] == "keep" and r["description"] != "baseline"]
-    discarded = [r for r in history if r["status"] == "discard"]
-    crashed  = [r for r in history if r["status"] == "crash"]
+    search_py  = read_file("search.py")
+    kept       = [r for r in history if r["status"] == "keep" and r["description"] != "baseline"]
+    discarded  = [r for r in history if r["status"] == "discard"]
+    crashed    = [r for r in history if r["status"] == "crash"]
 
     prompt = f"""
 You are documenting the final architecture of an autonomously optimised movie search system.
@@ -367,17 +435,16 @@ python agent_loop.py --eval-only
 Return only the markdown. No preamble, no commentary.
 """
 
-    response = call_api([{"role": "user", "content": prompt}])
-    content  = response.choices[0].message.content.strip()
+    response  = call_api([{"role": "user", "content": prompt}])
+    content   = response.choices[0].message.content.strip()
 
-    write_file(f"ARCHITECTURE_{objective}.md", content)
-    subprocess.run(["git", "add", f"ARCHITECTURE_{objective}.md"])
+    # Save as ARCHITECTURE_<objective>.md so multiple runs don't overwrite each other
+    filename  = f"ARCHITECTURE_{objective}.md"
+    write_file(filename, content)
+    subprocess.run(["git", "add", filename])
+    subprocess.run(["git", "commit", "-m", f"docs: architecture for objective={objective}"])
 
-    # Also commit it so it lives in the git history
-    subprocess.run(["git", "add", "ARCHITECTURE.md"])
-    subprocess.run(["git", "commit", "-m", "docs: add final architecture"])
-
-    print(f"   Saved → ARCHITECTURE.md  (committed to git)")
+    print(f"   Saved → {filename}  (committed to git)")
 
 # ─── MAIN LOOP ──────────────────────────────────────────────
 def run_experiment_loop(n_experiments=20, objective="recall"):
@@ -525,7 +592,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     print(f"\nFull log     : results.tsv")
     print(f"Replay log   : experiments/log.jsonl")
     print(f"Prompts      : experiments/prompts/")
-    print(f"Architecture : ARCHITECTURE.md")
+    print(f"Architecture : ARCHITECTURE_{objective}.md")
     print(f"Best search  : current state of search.py")
 
 

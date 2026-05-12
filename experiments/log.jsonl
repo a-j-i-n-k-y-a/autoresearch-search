@@ -1,0 +1,1176 @@
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-11T18:28:14",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 164.3348217010498,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-11T18:28:22",
+  "prompt_hash": "2d79f760",
+  "search_py": "Larger Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20) # Changed from 15 to 20\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20] # Changed from 15 to 20\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.001515
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-11T18:28:29",
+  "prompt_hash": "e21d1a63",
+  "search_py": "Larger Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20) # Increase the candidate pool size\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20] # Increase the candidate pool size\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.001611
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-11T18:28:37",
+  "prompt_hash": "15b47e58",
+  "search_py": "Larger Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20) # Increased candidate pool size\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20] # Increased candidate pool size\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.001708
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-11T18:28:46",
+  "prompt_hash": "5af07c70",
+  "search_py": "Larger Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20) # Increased candidate pool size\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20] # Increased candidate pool size\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.001808
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-11T18:28:54",
+  "prompt_hash": "63fdabb1",
+  "search_py": "# Larger Candidate Pool\n```python\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)  # Increased candidate pool\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]  # Increased candidate pool\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.001878
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-11T18:29:01",
+  "prompt_hash": "f904f59f",
+  "search_py": "Larger Candidate Pool\n```python\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.001966
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-11T18:29:09",
+  "prompt_hash": "01609723",
+  "search_py": "Larger Candidate Pool\n```python\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002065
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-11T18:29:28",
+  "prompt_hash": "e7a578a2",
+  "search_py": "Larger Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002192
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_009",
+  "timestamp": "2026-05-11T18:29:39",
+  "prompt_hash": "9a5161de",
+  "search_py": "Title-boosted BM25\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_top_idxs = np.argsort(title_bm25_scores_all)[::-1][: top_k * 15]\n    title_bm25_cands = title_bm25_top_idxs.tolist()\n    title_bm25_cand_scores = title_bm25_scores_all[title_bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands) | set(title_bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    title_bm25_ranks = np.argsort(np.argsort(-title_bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks + title_bm25_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002365
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_010",
+  "timestamp": "2026-05-11T18:29:57",
+  "prompt_hash": "7403787f",
+  "search_py": "Pure BM25\n```python\nimport numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    bm25_scores_all = bm25.get_scores(tokenized)\n    top_idxs = np.argsort(bm25_scores_all)[::-1][:top_k]\n    return df.iloc[top_idxs][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002021
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_011",
+  "timestamp": "2026-05-11T18:30:17",
+  "prompt_hash": "ab8f50a1",
+  "search_py": "Larger Candidate Pool\n```python\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002448
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_012",
+  "timestamp": "2026-05-11T18:30:36",
+  "prompt_hash": "78c355ab",
+  "search_py": "Increase Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002475
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_013",
+  "timestamp": "2026-05-11T18:30:56",
+  "prompt_hash": "e3d50f88",
+  "search_py": "Pure BM25 \n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    bm25_scores_all = bm25.get_scores(tokenized)\n    top_idx = np.argsort(bm25_scores_all)[::-1][:top_k]\n    top_cand_ids = top_idx\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.00212
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_014",
+  "timestamp": "2026-05-11T18:31:14",
+  "prompt_hash": "97ee9fda",
+  "search_py": "Larger Candidate Pool\n```python\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002448
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_015",
+  "timestamp": "2026-05-11T18:31:35",
+  "prompt_hash": "a358f840",
+  "search_py": "Increase Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002475
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_016",
+  "timestamp": "2026-05-11T18:31:54",
+  "prompt_hash": "85b20d90",
+  "search_py": "Pure BM25 \n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k]\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in bm25_top_idxs])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    title_ranks = np.argsort(np.argsort(-title_bm25_cand_scores))\n\n    rrf_scores = 1 / (bm25_ranks + title_ranks)\n\n    vote_counts = df.iloc[bm25_top_idxs]['vote_count'].values\n    vote_averages = df.iloc[bm25_top_idxs]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [bm25_top_idxs[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002293
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_017",
+  "timestamp": "2026-05-11T18:32:11",
+  "prompt_hash": "96ab2dda",
+  "search_py": "Larger Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002478
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_018",
+  "timestamp": "2026-05-11T18:32:33",
+  "prompt_hash": "dd1ec61e",
+  "search_py": "Increase Candidate Pool\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002478
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_019",
+  "timestamp": "2026-05-11T18:32:54",
+  "prompt_hash": "5c962f54",
+  "search_py": "Pure BM25\n```python\nimport numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    top_idx = np.argsort(bm25_scores_all)[::-1][:top_k]\n    top_cand_ids = top_idx\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002123
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_020",
+  "timestamp": "2026-05-11T18:33:10",
+  "prompt_hash": "914d50ff",
+  "search_py": "Increase Candidate Pool\n```python\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")\n```",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.002447
+  },
+  "status": "crash",
+  "description": "unlabeled experiment"
+}
+
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-11T18:41:36",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 118.10297966003418,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-11T18:41:44",
+  "prompt_hash": "fa4dcdab",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 51.01041793823242,
+    "llm_cost_usd": 0.001501
+  },
+  "status": "discard",
+  "description": "Larger Candidate Pool"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-11T18:41:52",
+  "prompt_hash": "dcf49b4f",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 46.40016555786133,
+    "llm_cost_usd": 0.001517
+  },
+  "status": "discard",
+  "description": "Larger Candidate Pool"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-11T18:42:00",
+  "prompt_hash": "4e3ea148",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in range(len(df))])\n\n    title_boosted_scores = np.array(bm25_scores_all) * 0.7 + np.array(title_bm25_scores_all) * 0.3\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 69.85020637512207,
+    "llm_cost_usd": 0.001583
+  },
+  "status": "discard",
+  "description": "Title-Boosted BM25"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-11T18:42:08",
+  "prompt_hash": "a809d656",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 51.0767936706543,
+    "llm_cost_usd": 0.001552
+  },
+  "status": "discard",
+  "description": "Larger Candidate Pool"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-11T18:42:16",
+  "prompt_hash": "820bcb22",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 72.43123054504395,
+    "llm_cost_usd": 0.001569
+  },
+  "status": "discard",
+  "description": "Larger Candidate Pool"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-11T18:42:26",
+  "prompt_hash": "33cf6bcc",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    query_vec = query_vec / np.linalg.norm(query_vec)  # Normalize query vector\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    # Normalize FAISS distances\n    faiss_distances = faiss_distances / np.linalg.norm(faiss_distances)\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 77.42362022399902,
+    "llm_cost_usd": 0.001619
+  },
+  "status": "discard",
+  "description": "Cosine Similarity"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-11T18:42:34",
+  "prompt_hash": "a5e33260",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 47.403573989868164,
+    "llm_cost_usd": 0.001602
+  },
+  "status": "discard",
+  "description": "Larger Candidate Pool"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-11T18:42:42",
+  "prompt_hash": "816de24f",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 20]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 79.75459098815918,
+    "llm_cost_usd": 0.001619
+  },
+  "status": "discard",
+  "description": "Larger Candidate Pool"
+}
+
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-11T18:57:51",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 127.94642448425293,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-11T19:41:56",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\nfrom sklearn.metrics.pairwise import cosine_similarity\nfrom rank_bm25 import BM25Okapi\nfrom sentence_transformers import SentenceTransformer\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 15)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n\n    vec_cands = [int(i) for i in vec_ids if i != -1]\n    vec_dist_cands = [d for i, d in zip(vec_ids, vec_distances) if i != -1]\n\n    bm25_scores_all = bm25.get_scores(tokenized)\n    bm25_top_idxs = np.argsort(bm25_scores_all)[::-1][: top_k * 15]\n    bm25_cands = bm25_top_idxs.tolist()\n    bm25_cand_scores = bm25_scores_all[bm25_top_idxs]\n\n    cand_set = set(vec_cands) | set(bm25_cands)\n    cand_ids = list(cand_set)\n\n    bm25_cand_scores = np.array([bm25_scores_all[i] for i in cand_ids])\n\n    title_bm25 = BM25Okapi(df['title'].apply(lambda x: x.lower().split()))\n    title_bm25_scores_all = title_bm25.get_scores(tokenized)\n    title_bm25_cand_scores = np.array([title_bm25_scores_all[i] for i in cand_ids])\n\n    vec_id_to_dist = {cid: d for cid, d in zip(vec_cands, vec_dist_cands)}\n    max_dist = max(vec_dist_cands) if vec_dist_cands else 1.0\n    faiss_distances = np.array([vec_id_to_dist.get(i, max_dist) for i in cand_ids])\n\n    bm25_ranks = np.argsort(np.argsort(-bm25_cand_scores))\n    faiss_ranks = np.argsort(np.argsort(faiss_distances))\n\n    rrf_scores = 1 / (bm25_ranks + faiss_ranks)\n\n    vote_counts = df.iloc[cand_ids]['vote_count'].values\n    vote_averages = df.iloc[cand_ids]['vote_average'].values\n    rrf_scores *= np.log(vote_counts + 1) * vote_averages\n\n    top_idx = np.argsort(rrf_scores)[::-1][:top_k]\n    top_cand_ids = [cand_ids[i] for i in top_idx]\n\n    return df.iloc[top_cand_ids][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 169.5362091064453,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-11T19:42:07",
+  "prompt_hash": "b538951f",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 5)\n    vec_ids = vec_ids[0]\n    \n    bm25_scores = bm25.get_scores(tokenized)\n    bm25_cands = np.argsort(bm25_scores)[-50:]\n    \n    cand_ids = np.unique(np.concatenate([vec_ids[vec_ids != -1], bm25_cands]))\n    \n    bm25_s = bm25_scores[cand_ids]\n    \n    faiss_s = np.zeros(len(cand_ids))\n    for i, cid in enumerate(cand_ids):\n        idx = np.where(vec_ids == cid)[0]\n        faiss_s[i] = vec_distances[0][idx[0]] if len(idx) > 0 else 100.0\n        \n    bm25_r = np.argsort(np.argsort(-bm25_s))\n    faiss_r = np.argsort(np.argsort(faiss_s))\n    \n    rrf = 1.0 / (bm25_r + faiss_r + 60)\n    \n    boost = df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    final_scores = rrf * boost\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 25.94442367553711,
+    "llm_cost_usd": 0.000404
+  },
+  "status": "keep",
+  "description": "# Simplify: remove heavy title_bm25 compute"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-11T19:42:16",
+  "prompt_hash": "f47e0c0f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 10)\n    vec_ids = vec_ids[0]\n    \n    bm25_scores = bm25.get_scores(tokenized)\n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    \n    cand_ids = np.unique(np.concatenate([vec_ids[vec_ids != -1], bm25_cands]))\n    \n    bm25_ranks = np.argsort(np.argsort(-bm25_scores[cand_ids]))\n    faiss_ranks = np.full(len(cand_ids), 100)\n    for i, cid in enumerate(cand_ids):\n        match = np.where(vec_ids == cid)[0]\n        if len(match) > 0: faiss_ranks[i] = match[0]\n    \n    rrf = 1.0 / (bm25_ranks + faiss_ranks + 60)\n    boost = df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    \n    top_idx = cand_ids[np.argsort(rrf * boost)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 25.054931640625,
+    "llm_cost_usd": 0.000349
+  },
+  "status": "discard",
+  "description": "Simplify RRF, remove explicit looping"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-11T19:42:24",
+  "prompt_hash": "85924c06",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    vec_ids = vec_ids[0]\n    \n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # Normalize scores to 0-1 range to allow additive combination\n    bm25_norm = (bm25_scores - bm25_scores.min()) / (bm25_scores.max() - bm25_scores.min() + 1e-9)\n    vec_norm = 1.0 / (1.0 + vec_distances[0])\n    \n    combined = np.zeros(len(df))\n    combined[vec_ids] += vec_norm * 0.6\n    combined += bm25_norm * 0.4\n    \n    top_idx = np.argsort(combined)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 26.495647430419922,
+    "llm_cost_usd": 0.000319
+  },
+  "status": "discard",
+  "description": "Simple weighted combination of scores"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-11T19:42:33",
+  "prompt_hash": "08f0a2f9",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 10)\n    vec_ids = vec_ids[0]\n    \n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # Use top candidates from both models\n    cand_ids = np.unique(np.concatenate([vec_ids[vec_ids != -1], np.argsort(bm25_scores)[-100:]]))\n    \n    # Normalize scores\n    bm25_s = bm25_scores[cand_ids]\n    faiss_s = -np.array([vec_distances[0][np.where(vec_ids == cid)[0][0]] if cid in vec_ids else -10.0 for cid in cand_ids])\n    \n    # Genre boost\n    genre_boost = np.array([1.5 if any(g in query.lower() for g in df.iloc[cid]['genres'].lower().split()) else 1.0 for cid in cand_ids])\n    \n    final_scores = (bm25_s / (bm25_s.max() + 1e-6) + (faiss_s - faiss_s.min()) / (faiss_s.ptp() + 1e-6)) * genre_boost\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.000374
+  },
+  "status": "crash",
+  "description": "# Boost hybrid with genre matches"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-11T19:42:42",
+  "prompt_hash": "52f9aa58",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\nfrom sklearn.preprocessing import MinMaxScaler\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    vec_ids = vec_ids[0]\n    vec_distances = vec_distances[0]\n    \n    bm25_scores = bm25.get_scores(tokenized)\n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    \n    cand_ids = np.unique(np.concatenate([vec_ids[vec_ids != -1], bm25_cands]))\n    \n    bm25_s = bm25_scores[cand_ids]\n    \n    faiss_s = np.zeros(len(cand_ids))\n    for i, cid in enumerate(cand_ids):\n        idx = np.where(vec_ids == cid)[0]\n        faiss_s[i] = vec_distances[idx[0]] if len(idx) > 0 else 1.5\n        \n    scaler = MinMaxScaler()\n    bm25_norm = scaler.fit_transform(bm25_s.reshape(-1, 1)).flatten()\n    faiss_norm = 1.0 - scaler.fit_transform(faiss_s.reshape(-1, 1)).flatten()\n    \n    boost = np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    boost = (boost - boost.min()) / (boost.max() - boost.min() + 1e-9)\n    \n    final_scores = (bm25_norm + faiss_norm) * (1.0 + 0.2 * boost)\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 24.245405197143555,
+    "llm_cost_usd": 0.000427
+  },
+  "status": "discard",
+  "description": "# Normalize scores before fusion"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-11T19:42:50",
+  "prompt_hash": "9e31aebd",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 10)\n    bm25_scores = bm25.get_scores(tokenized)\n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    \n    cand_ids = np.unique(np.concatenate([vec_ids[0], bm25_cands]))\n    \n    bm25_s = bm25_scores[cand_ids]\n    faiss_s = np.zeros(len(cand_ids))\n    \n    # Efficient lookup using map\n    id_to_dist = {id_: dist for id_, dist in zip(vec_ids[0], vec_distances[0])}\n    faiss_s = np.array([id_to_dist.get(cid, 100.0) for cid in cand_ids])\n        \n    bm25_r = np.argsort(np.argsort(-bm25_s))\n    faiss_r = np.argsort(np.argsort(faiss_s))\n    \n    rrf = 1.0 / (bm25_r + faiss_r + 60)\n    boost = df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    final_scores = rrf * boost\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 20.635175704956055,
+    "llm_cost_usd": 0.00041
+  },
+  "status": "discard",
+  "description": "# Simplify retrieval, remove explicit loop"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-11T19:42:59",
+  "prompt_hash": "0213821a",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_lower = query.lower()\n    tokenized = query_lower.split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 10)\n    vec_ids = vec_ids[0]\n    \n    bm25_scores = bm25.get_scores(tokenized)\n    \n    cand_ids = np.unique(np.concatenate([vec_ids[vec_ids != -1], np.argsort(bm25_scores)[-50:]]))\n    \n    bm25_s = bm25_scores[cand_ids]\n    faiss_s = np.zeros(len(cand_ids))\n    \n    for i, cid in enumerate(cand_ids):\n        idx = np.where(vec_ids == cid)[0]\n        faiss_s[i] = vec_distances[0][idx[0]] if len(idx) > 0 else 1.0\n        \n    bm25_r = np.argsort(np.argsort(-bm25_s))\n    faiss_r = np.argsort(np.argsort(faiss_s))\n    \n    rrf = 1.0 / (bm25_r + faiss_r + 60)\n    \n    genres = df.iloc[cand_ids]['genres'].values\n    genre_boost = np.array([1.5 if any(g.lower() in query_lower for g in genre.split(\", \")) else 1.0 for genre in genres])\n    \n    final_scores = rrf * genre_boost * (df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values))\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.163366317749023,
+    "llm_cost_usd": 0.000439
+  },
+  "status": "discard",
+  "description": "# Use genre keyword matching boost"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-11T19:43:08",
+  "prompt_hash": "04852336",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 10)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # Simple hybrid: top BM25 + top Vector\n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    vec_cands = vec_ids[0][vec_ids[0] != -1]\n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    \n    # Normalize scores\n    b_scores = bm25_scores[cand_ids]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    v_scores = np.full(len(cand_ids), 100.0)\n    for i, cid in enumerate(cand_ids):\n        match = np.where(vec_ids[0] == cid)[0]\n        if len(match) > 0:\n            v_scores[i] = vec_distances[0][match[0]]\n    v_scores = 1.0 - (v_scores / (v_scores.max() + 1e-9))\n    \n    boost = df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    final_scores = (b_scores + v_scores) * boost\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 25.24561882019043,
+    "llm_cost_usd": 0.000435
+  },
+  "status": "keep",
+  "description": "# Simplify RRF and remove loop"
+}
+
+{
+  "exp_id": "exp_009",
+  "timestamp": "2026-05-11T19:43:17",
+  "prompt_hash": "b93ee2de",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    vec_cands = vec_ids[0]\n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    \n    b_scores = bm25_scores[cand_ids]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    v_scores = np.zeros(len(cand_ids))\n    for i, cid in enumerate(cand_ids):\n        match = np.where(vec_ids[0] == cid)[0]\n        if len(match) > 0:\n            v_scores[i] = 1.0 / (1.0 + vec_distances[0][match[0]])\n    \n    pop = np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    final_scores = (b_scores + v_scores) * (1.0 + 0.1 * pop)\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 26.35645866394043,
+    "llm_cost_usd": 0.000417
+  },
+  "status": "discard",
+  "description": "# Add popularity weight decay"
+}
+
+{
+  "exp_id": "exp_010",
+  "timestamp": "2026-05-11T19:43:26",
+  "prompt_hash": "475c3d32",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    \n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_ids[0]]))\n    \n    b_scores = bm25_scores[cand_ids]\n    v_scores = np.zeros(len(cand_ids))\n    for i, cid in enumerate(cand_ids):\n        match = np.where(vec_ids[0] == cid)[0]\n        if len(match) > 0:\n            v_scores[i] = 1.0 / (1.0 + vec_distances[0][match[0]])\n    \n    # Genre boost: check if any query token exists in genre string\n    genre_boost = np.array([1.2 if any(t in str(g).lower() for t in tokenized) else 1.0 \n                            for g in df.iloc[cand_ids]['genres']])\n    \n    final_scores = (b_scores + v_scores * 2.0) * genre_boost\n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 25.651168823242188,
+    "llm_cost_usd": 0.000417
+  },
+  "status": "discard",
+  "description": "# Re-rank candidates using genre overlap"
+}
+
+{
+  "exp_id": "exp_011",
+  "timestamp": "2026-05-11T19:43:35",
+  "prompt_hash": "f84c7dc7",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k * 20)\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    cand_ids = np.unique(np.concatenate([np.argsort(bm25_scores)[-200:], vec_ids[0]]))\n    cand_ids = cand_ids[cand_ids >= 0]\n    \n    b_scores = bm25_scores[cand_ids]\n    v_scores = 1.0 / (1.0 + vec_distances[0][np.searchsorted(vec_ids[0], cand_ids)] if len(vec_ids[0]) > 0 else 1.0)\n    \n    pop_boost = np.log1p(df.iloc[cand_ids]['vote_count'].values) * df.iloc[cand_ids]['vote_average'].values\n    genre_boost = df.iloc[cand_ids]['genres'].apply(lambda x: any(q in x.lower() for q in query.lower().split())).values\n    \n    final_scores = (b_scores + v_scores) * pop_boost * (1.0 + 0.5 * genre_boost)\n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.000411
+  },
+  "status": "crash",
+  "description": "Boost with genres and popularity."
+}
+
+{
+  "exp_id": "exp_012",
+  "timestamp": "2026-05-11T19:43:44",
+  "prompt_hash": "f9fc1951",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_lower = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 50)\n    bm25_scores = bm25.get_scores(query_lower)\n    \n    # Get top candidates from both\n    bm25_cands = np.argsort(bm25_scores)[-50:]\n    vec_cands = vec_ids[0]\n    \n    # RRF scoring\n    all_cands = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    rrf_scores = np.zeros(len(all_cands))\n    \n    for i, cid in enumerate(all_cands):\n        # BM25 rank\n        b_rank = np.where(np.argsort(bm25_scores) == cid)[0]\n        if len(b_rank) > 0:\n            rrf_scores[i] += 1.0 / (60 + (len(bm25_scores) - b_rank[0]))\n        \n        # Vec rank\n        v_rank = np.where(vec_ids[0] == cid)[0]\n        if len(v_rank) > 0:\n            rrf_scores[i] += 1.0 / (60 + v_rank[0])\n            \n    # Boost with popularity\n    pop = df.iloc[all_cands]['vote_average'].values * np.log1p(df.iloc[all_cands]['vote_count'].values)\n    final_scores = rrf_scores * (1 + 0.1 * pop)\n    \n    top_idx = all_cands[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 45.81618309020996,
+    "llm_cost_usd": 0.000467
+  },
+  "status": "discard",
+  "description": "# Weighted RRF hybrid search"
+}
+
+{
+  "exp_id": "exp_013",
+  "timestamp": "2026-05-11T19:43:53",
+  "prompt_hash": "fc68a3ae",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    vec_cands = vec_ids[0]\n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    \n    b_ranks = np.full(len(cand_ids), 200)\n    for i, cid in enumerate(cand_ids):\n        pos = np.where(np.argsort(bm25_scores)[::-1] == cid)[0]\n        if len(pos) > 0: b_ranks[i] = pos[0]\n            \n    v_ranks = np.full(len(cand_ids), 200)\n    for i, cid in enumerate(cand_ids):\n        pos = np.where(vec_ids[0] == cid)[0]\n        if len(pos) > 0: v_ranks[i] = pos[0]\n            \n    rrf = (1.0 / (60 + b_ranks)) + (1.0 / (60 + v_ranks))\n    popularity = np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    final_scores = rrf * (1.0 + 0.1 * popularity)\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 65.15159606933594,
+    "llm_cost_usd": 0.000458
+  },
+  "status": "discard",
+  "description": "RRF with log-boosted popularity."
+}
+
+{
+  "exp_id": "exp_014",
+  "timestamp": "2026-05-11T19:44:01",
+  "prompt_hash": "c9be2490",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_lower = query.lower()\n    tokenized = query_lower.split()\n    \n    # Retrieval\n    bm25_scores = bm25.get_scores(tokenized)\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, 100)\n    \n    # RRF setup\n    all_ids = np.unique(np.concatenate([np.argsort(bm25_scores)[-100:], vec_ids[0]]))\n    rrf_scores = np.zeros(len(all_ids))\n    \n    # BM25 RRF\n    bm25_ranks = np.argsort(np.argsort(bm25_scores[all_ids]))\n    rrf_scores += 1.0 / (50.0 + bm25_ranks)\n    \n    # Vector RRF\n    v_ranks = np.full(len(all_ids), 100)\n    for i, cid in enumerate(all_ids):\n        match = np.where(vec_ids[0] == cid)[0]\n        if len(match) > 0:\n            v_ranks[i] = match[0]\n    rrf_scores += 1.0 / (50.0 + v_ranks)\n    \n    # Genre boost: check if query words appear in genres\n    genre_boost = np.array([sum(1 for word in tokenized if word in g.lower()) for g in df.iloc[all_ids]['genres']])\n    final_scores = rrf_scores + (genre_boost * 0.1)\n    \n    top_idx = all_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.1,
+    "latency_ms": 23.07000160217285,
+    "llm_cost_usd": 0.000463
+  },
+  "status": "discard",
+  "description": "# RRF with simple genre boost"
+}
+
+{
+  "exp_id": "exp_015",
+  "timestamp": "2026-05-11T19:44:13",
+  "prompt_hash": "fdee9919",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Genre boost: simple overlap\n    genre_boost = np.array([1.5 if any(g.lower() in query.lower() for g in str(row['genres']).split(',')) else 1.0 \n                            for _, row in df.iterrows()])\n    bm25_scores *= genre_boost\n    \n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    vec_cands = vec_ids[0][vec_ids[0] != -1]\n    \n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    \n    # RRF\n    ranks = np.full((len(cand_ids), 2), 200.0)\n    for i, cid in enumerate(cand_ids):\n        b_rank = np.where(np.argsort(bm25_scores)[::-1] == cid)[0]\n        if len(b_rank) > 0: ranks[i, 0] = b_rank[0]\n        v_rank = np.where(vec_ids[0] == cid)[0]\n        if len(v_rank) > 0: ranks[i, 1] = v_rank[0]\n            \n    rrf_scores = (1.0 / (60.0 + ranks[:, 0])) + (1.0 / (60.0 + ranks[:, 1]))\n    \n    top_idx = cand_ids[np.argsort(rrf_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 200.58064460754395,
+    "llm_cost_usd": 0.000461
+  },
+  "status": "discard",
+  "description": "# Log-rank fusion with genre-weighted BM25"
+}
+
+{
+  "exp_id": "exp_016",
+  "timestamp": "2026-05-11T19:44:22",
+  "prompt_hash": "8ed0d3a6",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    bm25_top_indices = np.argsort(bm25_scores)[-100:]\n    bm25_top_scores = bm25_scores[bm25_top_indices]\n    \n    all_indices = np.unique(np.concatenate([bm25_top_indices, vec_ids[0]]))\n    \n    rrf_scores = np.zeros(len(all_indices))\n    \n    # BM25 contribution\n    for i, idx in enumerate(bm25_top_indices):\n        pos = np.where(all_indices == idx)[0][0]\n        rrf_scores[pos] += 1.0 / (60 + (99 - i))\n        \n    # Vector contribution\n    for i, idx in enumerate(vec_ids[0]):\n        if idx != -1:\n            pos = np.where(all_indices == idx)[0][0]\n            rrf_scores[pos] += 1.0 / (60 + i)\n            \n    # Popularity boost\n    pop = df.iloc[all_indices]['vote_average'].values * np.log1p(df.iloc[all_indices]['vote_count'].values)\n    final_scores = rrf_scores * (1 + 0.1 * pop / pop.max())\n    \n    top_idx = all_indices[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.935270309448242,
+    "llm_cost_usd": 0.000448
+  },
+  "status": "discard",
+  "description": "# RRF with genre-based popularity boost"
+}
+
+{
+  "exp_id": "exp_017",
+  "timestamp": "2026-05-11T19:44:32",
+  "prompt_hash": "9f823ea5",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # RRF constants\n    k = 60\n    \n    # Candidate pool\n    bm25_top_idx = np.argsort(bm25_scores)[-100:]\n    vec_top_idx = vec_ids[0]\n    all_cands = np.unique(np.concatenate([bm25_top_idx, vec_top_idx]))\n    \n    rrf_scores = np.zeros(len(all_cands))\n    \n    # BM25 contribution\n    bm25_ranked = np.argsort(bm25_scores[all_cands])[::-1]\n    for rank, idx in enumerate(bm25_ranked):\n        rrf_scores[idx] += 1.0 / (k + rank + 1)\n        \n    # Vector contribution\n    for rank, cid in enumerate(vec_top_idx):\n        if cid != -1:\n            # Find index in all_cands\n            pos = np.where(all_cands == cid)[0]\n            if len(pos) > 0:\n                rrf_scores[pos[0]] += 1.0 / (k + rank + 1)\n                \n    top_idx = all_cands[np.argsort(rrf_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.826980590820312,
+    "llm_cost_usd": 0.000436
+  },
+  "status": "discard",
+  "description": "# Simple RRF with raw weights"
+}
+
+{
+  "exp_id": "exp_018",
+  "timestamp": "2026-05-11T19:44:41",
+  "prompt_hash": "e55754eb",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    bm25_ids = np.argsort(bm25_scores)[-100:]\n    \n    all_ids = np.unique(np.concatenate([vec_ids[0], bm25_ids]))\n    \n    rrf_scores = np.zeros(len(all_ids))\n    for i, cid in enumerate(all_ids):\n        rank_v = np.where(vec_ids[0] == cid)[0]\n        rank_b = np.where(bm25_ids == cid)[0]\n        \n        score = 0.0\n        if len(rank_v) > 0:\n            score += 1.0 / (60.0 + rank_v[0])\n        if len(rank_b) > 0:\n            score += 1.0 / (60.0 + (99 - rank_b[0]))\n        \n        # Simple popularity boost\n        pop = np.log1p(df.iloc[cid]['vote_count']) * df.iloc[cid]['vote_average']\n        rrf_scores[i] = score * (1 + 0.1 * pop)\n        \n    top_idx = all_ids[np.argsort(rrf_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 30.085229873657227,
+    "llm_cost_usd": 0.000434
+  },
+  "status": "discard",
+  "description": "# Efficient log-scaled RRF hybrid"
+}
+
+{
+  "exp_id": "exp_019",
+  "timestamp": "2026-05-11T19:44:48",
+  "prompt_hash": "5bdb39d8",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    vec_distances, vec_ids = index.search(query_vec, top_k)\n    \n    top_idx = vec_ids[0]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.100194931030273,
+    "llm_cost_usd": 0.000307
+  },
+  "status": "discard",
+  "description": "# Vector retrieval only"
+}
+
+{
+  "exp_id": "exp_020",
+  "timestamp": "2026-05-11T19:44:58",
+  "prompt_hash": "73cca8ab",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, 100)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # RRF constants\n    k_rrf = 60\n    \n    # Get all candidate indices\n    top_bm25_idx = np.argsort(bm25_scores)[-100:]\n    top_vec_idx = vec_ids[0]\n    \n    all_cands = np.unique(np.concatenate([top_bm25_idx, top_vec_idx]))\n    rrf_scores = np.zeros(len(all_cands))\n    \n    # Map for fast lookup\n    id_to_idx = {idx: i for i, idx in enumerate(all_cands)}\n    \n    # BM25 contribution\n    for rank, idx in enumerate(np.argsort(bm25_scores[all_cands])[-len(all_cands):]):\n        rrf_scores[idx] += 1 / (k_rrf + (len(all_cands) - rank))\n        \n    # Vector contribution\n    for rank, idx in enumerate(top_vec_idx):\n        if idx != -1 and idx in id_to_idx:\n            rrf_scores[id_to_idx[idx]] += 1 / (k_rrf + rank + 1)\n            \n    top_idx = all_cands[np.argsort(rrf_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.022174835205078,
+    "llm_cost_usd": 0.000444
+  },
+  "status": "discard",
+  "description": "# Simple hybrid RRF rank fusion"
+}
+
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-11T19:47:15",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 10)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # Simple hybrid: top BM25 + top Vector\n    bm25_cands = np.argsort(bm25_scores)[-100:]\n    vec_cands = vec_ids[0][vec_ids[0] != -1]\n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    \n    # Normalize scores\n    b_scores = bm25_scores[cand_ids]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    v_scores = np.full(len(cand_ids), 100.0)\n    for i, cid in enumerate(cand_ids):\n        match = np.where(vec_ids[0] == cid)[0]\n        if len(match) > 0:\n            v_scores[i] = vec_distances[0][match[0]]\n    v_scores = 1.0 - (v_scores / (v_scores.max() + 1e-9))\n    \n    boost = df.iloc[cand_ids]['vote_average'].values * np.log1p(df.iloc[cand_ids]['vote_count'].values)\n    final_scores = (b_scores + v_scores) * boost\n    \n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 67.34237670898438,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-11T19:47:23",
+  "prompt_hash": "d649dc73",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    vec_distances, vec_ids = index.search(query_vec, top_k * 5)\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    bm25_cands = np.argsort(bm25_scores)[-50:]\n    vec_cands = vec_ids[0]\n    cand_ids = np.unique(np.concatenate([bm25_cands, vec_cands]))\n    \n    b_scores = bm25_scores[cand_ids]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    v_scores = np.zeros(len(cand_ids))\n    for i, cid in enumerate(cand_ids):\n        match = np.where(vec_ids[0] == cid)[0]\n        if len(match) > 0:\n            v_scores[i] = 1.0 / (1.0 + vec_distances[0][match[0]])\n            \n    final_scores = b_scores + v_scores\n    top_idx = cand_ids[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.242998123168945,
+    "llm_cost_usd": 0.000347
+  },
+  "status": "keep",
+  "description": "# Simple BM25 and vector fusion"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-11T19:47:31",
+  "prompt_hash": "ba0989a9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    \n    # Boost by popularity (vote_average * log1p(vote_count))\n    boost = df['vote_average'].values * np.log1p(df['vote_count'].values)\n    final_scores = scores + (boost * 0.05)\n    \n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 14.865827560424805,
+    "llm_cost_usd": 0.000248
+  },
+  "status": "keep",
+  "description": "Pure BM25 with vote boost"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-11T19:47:39",
+  "prompt_hash": "2f457da8",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    \n    # Genre boost: 10% bonus if query words appear in genre string\n    genres = df['genres'].str.lower().values\n    genre_boost = np.array([any(word in g for word in tokenized) for g in genres])\n    final_scores = scores + (genre_boost * np.max(scores) * 0.1)\n    \n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.61578941345215,
+    "llm_cost_usd": 0.000238
+  },
+  "status": "discard",
+  "description": "Pure BM25 with genre filtering"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-11T19:47:47",
+  "prompt_hash": "09bc6065",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 12.777948379516602,
+    "llm_cost_usd": 0.000208
+  },
+  "status": "keep",
+  "description": "Simple BM25 without boost"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-11T19:47:55",
+  "prompt_hash": "c0dc2a53",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(vec, 100)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    candidates = faiss_idx[0]\n    final_scores = []\n    for idx in candidates:\n        score = bm25_scores[idx] + 0.5\n        final_scores.append(score)\n        \n    top_idx = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 20.883560180664062,
+    "llm_cost_usd": 0.000245
+  },
+  "status": "discard",
+  "description": "# Hybrid FAISS-BM25 vector scoring"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-11T19:48:02",
+  "prompt_hash": "b5e5e220",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    boost = 1 + np.log1p(df[\"vote_average\"].fillna(0)) / 10.0\n    final_scores = scores * boost\n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 15.156173706054688,
+    "llm_cost_usd": 0.000228
+  },
+  "status": "discard",
+  "description": "Weight BM25 with vote_average"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-11T19:48:10",
+  "prompt_hash": "a0258db9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    boost = np.log1p(df[\"vote_count\"].values)\n    final_scores = scores + 0.1 * boost\n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 12.476968765258789,
+    "llm_cost_usd": 0.000231
+  },
+  "status": "keep",
+  "description": "Boost BM25 with vote_count"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-11T19:48:19",
+  "prompt_hash": "b6d2edfa",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.970186233520508,
+    "llm_cost_usd": 0.000226
+  },
+  "status": "keep",
+  "description": "Simple BM25 without vote boost"
+}
+
+{
+  "exp_id": "exp_009",
+  "timestamp": "2026-05-11T19:48:26",
+  "prompt_hash": "0d0c7580",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    boost = np.log1p(df[\"vote_count\"].fillna(0).values)\n    final_scores = scores + (boost * 0.1)\n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 14.452791213989258,
+    "llm_cost_usd": 0.000245
+  },
+  "status": "discard",
+  "description": "# Boost BM25 with log(vote_count)"
+}
+
+{
+  "exp_id": "exp_010",
+  "timestamp": "2026-05-11T19:48:33",
+  "prompt_hash": "a7d4b417",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized)\n    vec = model.encode([query])\n    faiss_dist, faiss_idx = index.search(vec.astype(\"float32\"), 100)\n    \n    rrf_scores = np.zeros(len(df))\n    rrf_scores[np.argsort(bm25_scores)[-100:]] += 1.0 / (60 + np.arange(100))\n    rrf_scores[faiss_idx[0]] += 1.0 / (60 + np.arange(100))\n    \n    top_idx = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 23.375797271728516,
+    "llm_cost_usd": 0.000289
+  },
+  "status": "discard",
+  "description": "RRF BM25 and FAISS fusion"
+}
+
+{
+  "exp_id": "exp_000",
+  "timestamp": "2026-05-11T19:49:58",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.413810729980469,
+    "llm_cost_usd": 0.0
+  },
+  "status": "keep",
+  "description": "baseline"
+}
+
+{
+  "exp_id": "exp_001",
+  "timestamp": "2026-05-11T19:50:07",
+  "prompt_hash": "b6478b6f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, 100)\n    faiss_idx = faiss_idx[0]\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    bm25_idx = np.argsort(bm25_scores)[-100:]\n    \n    combined_ranks = {}\n    for i, idx in enumerate(faiss_idx):\n        combined_ranks[idx] = combined_ranks.get(idx, 0) + 1 / (i + 1 + 60)\n    for i, idx in enumerate(bm25_idx):\n        combined_ranks[idx] = combined_ranks.get(idx, 0) + 1 / (i + 1 + 60)\n        \n    top_idx = sorted(combined_ranks, key=combined_ranks.get, reverse=True)[:top_k]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 51.25017166137695,
+    "llm_cost_usd": 0.000264
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and Faiss RRF"
+}
+
+{
+  "exp_id": "exp_002",
+  "timestamp": "2026-05-11T19:50:16",
+  "prompt_hash": "f0740620",
+  "search_py": "import numpy as np\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    faiss.normalize_L2(vec)\n    _, top_idx = index.search(vec, top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.111783981323242,
+    "llm_cost_usd": 0.000194
+  },
+  "status": "discard",
+  "description": "# Use faiss with normalized vectors"
+}
+
+{
+  "exp_id": "exp_003",
+  "timestamp": "2026-05-11T19:50:23",
+  "prompt_hash": "6e003325",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized)\n    boosted_scores = bm25_scores * (1 + 0.1 * df[\"vote_average\"].fillna(0).values)\n    top_idx = np.argsort(boosted_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 12.164592742919922,
+    "llm_cost_usd": 0.000214
+  },
+  "status": "discard",
+  "description": "# Boost BM25 with vote_average"
+}
+
+{
+  "exp_id": "exp_004",
+  "timestamp": "2026-05-11T19:50:33",
+  "prompt_hash": "82ae57a1",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    boost = np.log1p(df[\"vote_average\"] * df[\"vote_count\"].clip(upper=1000) / 1000)\n    final_scores = scores + 0.5 * boost.values\n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.907194137573242,
+    "llm_cost_usd": 0.000226
+  },
+  "status": "discard",
+  "description": "# Weighted BM25 and vote boost"
+}
+
+{
+  "exp_id": "exp_005",
+  "timestamp": "2026-05-11T19:50:41",
+  "prompt_hash": "175171d2",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    # Boost by vote_average (normalized)\n    boost = df[\"vote_average\"].fillna(0).values / 10.0\n    final_scores = scores + (boost * 0.5)\n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 13.889598846435547,
+    "llm_cost_usd": 0.000228
+  },
+  "status": "discard",
+  "description": "# Combine BM25 with vote_average"
+}
+
+{
+  "exp_id": "exp_006",
+  "timestamp": "2026-05-11T19:50:49",
+  "prompt_hash": "711bcbd1",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized)\n    \n    # Get 100 candidates from BM25, then rerank with vote_average\n    top_100_idx = np.argsort(bm25_scores)[-100:]\n    candidates = df.iloc[top_100_idx].copy()\n    \n    # Boost by vote_average (normalized)\n    final_scores = bm25_scores[top_100_idx] + (candidates[\"vote_average\"].values * 0.1)\n    \n    best_idx = top_100_idx[np.argsort(final_scores)[-top_k:][::-1]]\n    return df.iloc[best_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 15.471220016479492,
+    "llm_cost_usd": 0.000265
+  },
+  "status": "discard",
+  "description": "# Use top-k candidate expansion"
+}
+
+{
+  "exp_id": "exp_007",
+  "timestamp": "2026-05-11T19:50:57",
+  "prompt_hash": "ddf67b3c",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    scores = bm25.get_scores(query_tokens)\n    \n    # Boost scores if query terms appear in title\n    title_mask = df.title.str.lower().apply(lambda x: any(t in x for t in query_tokens))\n    scores[title_mask.values] *= 1.5\n    \n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.4,
+    "latency_ms": 23.146629333496094,
+    "llm_cost_usd": 0.000243
+  },
+  "status": "discard",
+  "description": "# BM25 title weight boost"
+}
+
+{
+  "exp_id": "exp_008",
+  "timestamp": "2026-05-11T19:51:05",
+  "prompt_hash": "cd2d7f5b",
+  "search_py": "import numpy as np\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    faiss.normalize_L2(vec)\n    _, top_idx = index.search(vec, top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 10.413026809692383,
+    "llm_cost_usd": 0.000224
+  },
+  "status": "discard",
+  "description": "# Normalize vector similarity search"
+}
+
+{
+  "exp_id": "exp_009",
+  "timestamp": "2026-05-11T19:51:13",
+  "prompt_hash": "6f5099dd",
+  "search_py": "import numpy as np\nfrom sklearn.preprocessing import MinMaxScaler\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query])\n    _, faiss_idx = index.search(query_vec.astype(\"float32\"), 100)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    # Sigmoid-like normalization to mix signals\n    norm_bm25 = 1 / (1 + np.exp(-0.1 * (bm25_scores - np.mean(bm25_scores))))\n    \n    candidate_scores = norm_bm25[faiss_idx[0]]\n    top_candidate_idx = np.argsort(candidate_scores)[-top_k:][::-1]\n    \n    final_indices = faiss_idx[0][top_candidate_idx]\n    return df.iloc[final_indices][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 23.306989669799805,
+    "llm_cost_usd": 0.000285
+  },
+  "status": "discard",
+  "description": "# Hybrid BM25 with sigmoid score normalization"
+}
+
+{
+  "exp_id": "exp_010",
+  "timestamp": "2026-05-11T19:51:21",
+  "prompt_hash": "03a818a2",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, top_idx = index.search(vec, top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 9.599781036376953,
+    "llm_cost_usd": 0.000228
+  },
+  "status": "discard",
+  "description": "# Simple Faiss vector search"
+}
+
+{
+  "exp_id": "exp_011",
+  "timestamp": "2026-05-11T19:51:29",
+  "prompt_hash": "f2546a50",
+  "search_py": "import numpy as np\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    b_scores = bm25.get_scores(query_tokens)\n    g_scores = df.genres.str.lower().str.contains('|'.join(query_tokens), na=False).astype(float)\n    combined = b_scores + g_scores * np.mean(b_scores)\n    top_idx = np.argsort(combined)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 16.18475914001465,
+    "llm_cost_usd": 0.000258
+  },
+  "status": "discard",
+  "description": "# Use combined BM25 and genre weight"
+}
+
+{
+  "exp_id": "exp_012",
+  "timestamp": "2026-05-11T19:51:36",
+  "prompt_hash": "fba25797",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 15.553569793701172,
+    "llm_cost_usd": 0.000236
+  },
+  "status": "discard",
+  "description": "# BM25 over title and overview"
+}
+
+{
+  "exp_id": "exp_013",
+  "timestamp": "2026-05-11T19:51:45",
+  "prompt_hash": "b4804a20",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, top_k * 5)\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    combined = np.zeros(len(df))\n    combined[faiss_idx[0]] += np.linspace(1, 0, top_k * 5)\n    combined += (bm25_scores / (np.max(bm25_scores) + 1e-9))\n    \n    top_idx = np.argsort(combined)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.7,
+    "latency_ms": 24.59397315979004,
+    "llm_cost_usd": 0.00028
+  },
+  "status": "discard",
+  "description": "# Hybrid search with score scaling"
+}
+
+{
+  "exp_id": "exp_014",
+  "timestamp": "2026-05-11T19:51:52",
+  "prompt_hash": "f9924b6a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, top_idx = index.search(vec, top_k)\n    return df.iloc[top_idx[0]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 11.527347564697266,
+    "llm_cost_usd": 0.000232
+  },
+  "status": "discard",
+  "description": "# Faiss vector search only"
+}
+
+{
+  "exp_id": "exp_015",
+  "timestamp": "2026-05-11T19:52:00",
+  "prompt_hash": "3fd9c102",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_indices = index.search(query_vec, 100)\n    faiss_indices = faiss_indices[0]\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    rrf_scores = np.zeros(len(df))\n    for i, idx in enumerate(faiss_indices):\n        rrf_scores[idx] += 1 / (60 + i + 1)\n    \n    top_bm25 = np.argsort(bm25_scores)[-100:]\n    for i, idx in enumerate(top_bm25[::-1]):\n        rrf_scores[idx] += 1 / (60 + i + 1)\n        \n    return df.iloc[np.argsort(rrf_scores)[-top_k:][::-1]][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 25.45180320739746,
+    "llm_cost_usd": 0.000305
+  },
+  "status": "discard",
+  "description": "# RRF hybrid: BM25 + Faiss"
+}
+
+{
+  "exp_id": "exp_016",
+  "timestamp": "2026-05-11T19:52:07",
+  "prompt_hash": "4a2a2482",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized = query.lower().split()\n    scores = bm25.get_scores(tokenized)\n    boost = np.log1p(df[\"vote_average\"].fillna(0)) * 0.1\n    final_scores = scores + boost\n    top_idx = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 12.86478042602539,
+    "llm_cost_usd": 0.000255
+  },
+  "status": "discard",
+  "description": "# Hybrid BM25 with vote_average boost"
+}
+
+{
+  "exp_id": "exp_017",
+  "timestamp": "2026-05-11T19:52:17",
+  "prompt_hash": "510f4038",
+  "search_py": "import numpy as np\nimport faiss\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_idx = index.search(query_vec, top_k * 5)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    combined_scores = np.zeros(len(df))\n    combined_scores[faiss_idx[0]] += 0.5\n    combined_scores += (bm25_scores / (np.max(bm25_scores) + 1e-9)) * 0.5\n    \n    top_idx = np.argsort(combined_scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 26.89976692199707,
+    "llm_cost_usd": 0.000288
+  },
+  "status": "discard",
+  "description": "# Hybrid semantic and BM25 search"
+}
+
+{
+  "exp_id": "exp_018",
+  "timestamp": "2026-05-11T19:52:25",
+  "prompt_hash": "2fcf3033",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    scores = bm25.get_scores(query_tokens)\n    \n    # Boost scores if query terms appear in title\n    title_mask = df['title'].str.lower().apply(lambda x: any(token in x for token in query_tokens))\n    scores[title_mask] *= 1.5\n    \n    top_idx = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.4,
+    "latency_ms": 23.21782112121582,
+    "llm_cost_usd": 0.000267
+  },
+  "status": "discard",
+  "description": "# BM25 title score multiplier"
+}
+
+{
+  "exp_id": "exp_019",
+  "timestamp": "2026-05-11T19:52:32",
+  "prompt_hash": "178340dd",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query])\n    _, top_idx = index.search(vec.astype(\"float32\"), top_k * 5)\n    candidates = df.iloc[top_idx[0]]\n    # Boost by vote count to favor popular matches\n    scores = candidates[\"vote_average\"].values * np.log1p(candidates[\"vote_count\"].values)\n    final_idx = candidates.index[np.argsort(scores)[-top_k:][::-1]]\n    return df.loc[final_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.8,
+    "latency_ms": 12.214231491088867,
+    "llm_cost_usd": 0.00027
+  },
+  "status": "discard",
+  "description": "# Vector search with post-filtering"
+}
+
+{
+  "exp_id": "exp_020",
+  "timestamp": "2026-05-11T19:52:40",
+  "prompt_hash": "277474e6",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, faiss_indices = index.search(query_vec, 100)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    # Combined hybrid score: normalize and sum\n    combined = np.zeros(len(df))\n    combined[faiss_indices[0]] += np.linspace(1, 0.1, 100)\n    combined += (bm25_scores - np.min(bm25_scores)) / (np.max(bm25_scores) - np.min(bm25_scores) + 1e-9)\n    \n    top_idx = np.argsort(combined)[-top_k:][::-1]\n    return df.iloc[top_idx][[\"title\", \"overview\"]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.6,
+    "latency_ms": 26.233768463134766,
+    "llm_cost_usd": 0.000302
+  },
+  "status": "discard",
+  "description": "# Weighted BM25 and vector search"
+}
+
