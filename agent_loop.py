@@ -209,7 +209,8 @@ def replay_experiment(exp_id):
     if os.path.exists(prompt_path):
         print(f"   Prompt      : {prompt_path}")
 
-    write_file("search.py", found["search_py"])
+    _, clean_code = parse_agent_response(found["search_py"])
+    write_file("search.py", clean_code)
 
     try:
         recall, latency = run_eval()
