@@ -14,15 +14,13 @@ Autonomous agent improving a movie search system across three objectives.
 
 ## The objective
 
-Optimize a **single score** that balances three constraints:
+Three constraints tracked separately — never combined:
+- **recall@10** — primary. Higher is better. Max 1.0.
+- **latency_ms** — lower is better. Under 30ms is ideal.
+- **llm_cost_usd** — cost of the API call that generated this code.
 
-    score = recall@10 - max(0, (latency_ms - 30) / 100) * 0.2
-
-- **Recall@10** — primary objective. Higher is better. Max is 1.0.
-- **Latency** — cost proxy. Queries under 30ms are free. Above that, you pay.
-- **Simplicity** — all else equal, fewer lines wins. Removing code that doesn't hurt recall is a win.
-
-The score is what determines keep vs discard. A recall gain that costs too much latency is not worth it.
+The active objective is passed at runtime via --objective flag.
+Improving on the active objective = keep. Otherwise = discard.
 
 ## Available resources in search()
 
@@ -72,16 +70,17 @@ Equal score, less code — always keep.
 ## Output format
 
 The benchmark prints:
-    recall@10: 0.700000
-    latency:   27.5ms
-    score:     0.695000
+    recall@10    : 0.700000
+    latency      : 27.5ms
+    llm_cost     : $0.001489
 
 ## Logging
 
 `results.tsv` columns (tab-separated):
-    commit  score   recall  latency_ms  status  description
+    commit  recall  latency_ms  llm_cost_usd  status  description
 
 Status is `keep`, `discard`, or `crash`. Use 0.0 for all metrics on crash.
+Three constraints are tracked separately — never combined into one score.
 
 ## NEVER STOP
 

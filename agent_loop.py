@@ -13,7 +13,7 @@ from prepare import load_resources, evaluate, BENCHMARK_QUERIES
 load_dotenv()
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-MODEL          = "gemini-3.1-flash-lite"
+MODEL          = "gemini-3.1-flash-lite-preview"
 
 client = OpenAI(
     api_key=GOOGLE_API_KEY,
@@ -60,7 +60,6 @@ def is_improvement(new, best, objective):
             return False
 
         # Cost guardrail — reject if LLM cost more than doubles
-        # (guards against bloated prompts, not a hard optimization target)
         if new["llm_cost_usd"] > best["llm_cost_usd"] * 2.0 and best["llm_cost_usd"] > 0:
             return False
 
@@ -71,6 +70,29 @@ def is_improvement(new, best, objective):
         )
 
     return False
+
+def best_from_history(history, objective):
+    """
+    Find the best kept experiment from history for the given objective.
+    Returns None if no kept experiments exist.
+    """
+    kept = [
+        r for r in history
+        if r["status"] == "keep" and r["description"] != "baseline"
+    ]
+    if not kept:
+        return None
+
+    if objective == "recall":
+        return max(kept, key=lambda r: r["metrics"]["recall"])
+    elif objective == "latency":
+        return min(kept, key=lambda r: r["metrics"]["latency_ms"])
+    elif objective == "cost":
+        return min(kept, key=lambda r: r["metrics"]["llm_cost_usd"])
+    elif objective == "pareto":
+        # For pareto, best = highest recall among kept
+        return max(kept, key=lambda r: r["metrics"]["recall"])
+    return None
 
 # ─── EVAL ───────────────────────────────────────────────────
 def run_eval():
@@ -209,6 +231,7 @@ def replay_experiment(exp_id):
     if os.path.exists(prompt_path):
         print(f"   Prompt      : {prompt_path}")
 
+    # Clean code before writing — strips any raw LLM response artifacts
     _, clean_code = parse_agent_response(found["search_py"])
     write_file("search.py", clean_code)
 
@@ -289,17 +312,17 @@ def parse_agent_response(raw):
 def ask_agent(program_md, search_py, history, objective):
     """Ask LLM for next search.py modification. Returns (code, cost, description, prompt)."""
 
+    # Last 10 entries for context window efficiency
     history_str = "\n".join([format_history_entry(r) for r in history[-10:]])
 
-    # ── Build anti-repetition context ──
-    # Everything already tried — injected into prompt so model can't ignore it
+    # ── Anti-repetition: everything already tried across ALL runs ──
     tried_descriptions = [
         r['description'] for r in history
         if r['description'] != "baseline"
     ]
     tried_str = "\n".join(f"  - {d}" for d in tried_descriptions) if tried_descriptions else "  (none yet)"
 
-    # Strategies already present in the current search.py
+    # ── What's already implemented in current search.py ──
     already_in_code = []
     if "BM25Okapi(df['title']" in search_py or "title_bm25" in search_py:
         already_in_code.append("Title-boosted BM25")
@@ -317,7 +340,7 @@ def ask_agent(program_md, search_py, history, objective):
         "recall":  "Maximize recall@10. Latency and cost are secondary.",
         "latency": "Minimize latency_ms. Recall must stay above 0.5 or the change is useless.",
         "cost":    "Minimize LLM tokens used to generate the spec — write simpler, shorter search.py so the next prompt is cheaper.",
-        "pareto":  "Only keep changes that improve at least one of (recall, latency, cost) without hurting any other.",
+        "pareto":  "Improve recall or reduce latency. Recall must not drop. Latency must not increase more than 10%. Cost is just a guardrail.",
     }[objective]
 
     prompt = f"""
@@ -342,9 +365,9 @@ You are an autonomous research agent improving a movie search system.
 - latency_ms     — wall clock milliseconds per query
 - llm_cost_usd   — cost of this API call to generate the spec
 
-## ALREADY TRIED — do not repeat these experiments:
+## ALREADY TRIED across all runs — do not repeat these:
 {tried_str}
-If your idea is similar to any of the above, pick something different.
+If your idea is similar to any of the above, pick something structurally different.
 
 ## ALREADY IN THE CODE — do not re-add these, they are implemented:
 {already_str}
@@ -433,7 +456,6 @@ Which changes actually moved the needle, and what failed. Be specific.
 |--------|----------|-------|
 | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
 | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
-| llm_cost_usd  | {baseline_metrics['llm_cost_usd']:.6f} | {best_metrics['llm_cost_usd']:.6f} |
 
 ## How to run
 ```bash
@@ -458,7 +480,21 @@ Return only the markdown. No preamble, no commentary.
 def run_experiment_loop(n_experiments=20, objective="recall"):
 
     program_md = read_file("program.md")
-    history    = []
+
+    # ── Load full history from all previous runs ──
+    # Agent sees everything ever tried — across objectives, across sessions
+    history = []
+    past_records = load_experiments()
+    if past_records:
+        for r in past_records:
+            history.append({
+                "description": r["description"],
+                "metrics":     r["metrics"],
+                "status":      r["status"],
+            })
+        print(f"📚 Loaded {len(history)} past experiments from log")
+    else:
+        print("📚 No past experiments found — starting fresh")
 
     print("=" * 60)
     print("AUTORESEARCH — Search System Optimizer")
@@ -479,21 +515,38 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     print(f"recall@10    : {baseline_recall:.6f}")
     print(f"latency      : {baseline_latency:.1f}ms")
 
-    commit = git_commit("baseline")
-    log_result(commit, baseline_metrics, "keep", "baseline")
-    save_experiment("exp_000", "", read_file("search.py"),
-                    baseline_metrics, "keep", "baseline")
+    # ── Resume from best prior result for this objective ──
+    best_prior = best_from_history(history, objective)
+    if best_prior:
+        best_metrics = best_prior["metrics"].copy()
+        print(
+            f"📈 Resuming from best prior: "
+            f"recall={best_metrics['recall']:.3f}  "
+            f"latency={best_metrics['latency_ms']:.1f}ms  "
+            f"(objective={objective})"
+        )
+    else:
+        best_metrics = baseline_metrics.copy()
+        print(f"📈 No prior kept experiments — using baseline as starting point")
 
-    best_metrics = baseline_metrics.copy()
-    history.append({
-        "description": "baseline",
-        "metrics":     baseline_metrics,
-        "status":      "keep"
-    })
+    # Only commit baseline if this is a fresh start
+    if not past_records:
+        commit = git_commit("baseline")
+        log_result(commit, baseline_metrics, "keep", "baseline")
+        save_experiment("exp_000", "", read_file("search.py"),
+                        baseline_metrics, "keep", "baseline")
+        history.append({
+            "description": "baseline",
+            "metrics":     baseline_metrics,
+            "status":      "keep"
+        })
 
     # ── Experiment loop ──
+    # Compute next exp_id from existing log so IDs never collide across runs
+    next_exp_num = len(past_records) + 1
+
     for i in range(n_experiments):
-        exp_id = f"exp_{i + 1:03d}"
+        exp_id = f"exp_{next_exp_num + i:03d}"
 
         print(f"\n{'=' * 60}")
         print(f"EXPERIMENT {i + 1}/{n_experiments}  [{exp_id}]")
