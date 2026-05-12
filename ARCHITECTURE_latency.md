@@ -1,28 +1,29 @@
 # Architecture
 
 ## What it does
-The system performs a rapid text-based search to find relevant movies. It breaks down your search terms and matches them against movie descriptions using statistical frequency, ignoring complex machine learning models to provide results almost instantly.
+The system performs an ultra-fast semantic search by converting user queries into mathematical vectors and matching them directly against a pre-indexed collection of movie data. It skips traditional keyword analysis to provide instant search results.
 
 ## Components
-*   **BM25 Algorithm:** A standard information retrieval technique that scores movies based on the presence and frequency of query terms in the "overview" text.
-*   **NumPy Indexing:** Used for efficient array sorting and ranking, ensuring the top-k results are retrieved without overhead.
-*   **DataFrame Storage:** Holds the movie dataset (titles and overviews), allowing for rapid selection and filtering once the search engine identifies the best candidates.
+*   **Encoder Model**: Converts text queries into high-dimensional vectors, capturing the conceptual meaning rather than just matching words.
+*   **FAISS Index**: A specialized, high-performance database designed for similarity searching, allowing the system to find the nearest vectors in milliseconds.
+*   **DataFrame (`df`)**: A lightweight lookup table that holds the metadata for the retrieved movie IDs, acting as the final data fetcher.
 
 ## Why it works
-By stripping away heavy vector embeddings and hybrid scoring layers, the system relies entirely on efficient sparse retrieval. The performance gain comes from bypassing the GPU/CPU-heavy inference required by neural search models, focusing solely on fast token-matching against a pre-computed frequency index.
+The design works by eliminating heavy compute steps like BM25 text tokenization and complex reranking logic. By delegating the search entirely to the FAISS index (a highly optimized C++ backend), the system avoids Python-level loops and minimizes the memory overhead associated with managing secondary data structures.
 
 ## Tradeoffs
-To achieve a ~82% reduction in latency, the system prioritizes speed over accuracy. The loss in recall is primarily due to the abandonment of semantic matching; the system no longer understands synonyms or context, focusing strictly on exact keyword overlaps.
+To achieve a ~10x improvement in latency, the system sacrificed 33% of its original recall. The architecture prioritizes speed (the system’s primary objective) by favoring "good enough" semantic matching over the precision of hybrid keyword-and-vector reranking.
 
 ## Key experiments
-*   **What worked:** Stripping out secondary features like genre filtering and complex vote-boost calculations drastically reduced overhead. The "Simple BM25 without vote boost" proved to be the most efficient configuration.
-*   **What failed:** Hybrid approaches (FAISS + BM25) and RRF (Reciprocal Rank Fusion) failed to meet the latency objective, as the computational cost of merging two different search outputs outweighed the marginal accuracy benefits.
+*   **The "Simplify" Shift**: Moving from complex hybrid RRF/BM25 pipelines to a single, direct FAISS vector search was the catalyst for latency reduction. 
+*   **Failed Approaches**: Attempts to boost accuracy using genre-keyword filtering and popularity weighting consistently crashed the system or introduced prohibitive overhead (e.g., the 4.6s latency spike during multi-field BM25 integration). 
+*   **Winner**: The final version—a raw `index.search` call—stripped away all conditional logic, resulting in the most performant state at 8.6ms.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.800 | 0.600 |
-| latency_ms | 67.3 | 12.0 |
+| recall@10 | 0.900 | 0.600 |
+| latency_ms | 87.5 | 8.6 |
 
 ## How to run
 ```bash
