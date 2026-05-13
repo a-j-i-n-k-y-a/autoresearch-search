@@ -1,0 +1,294 @@
+exp_id	commit	recall	latency_ms	llm_cost_usd	status	description
+exp_000	48f31eb	0.900000	208.1	0.000000	keep	baseline
+exp_001	discarded	0.600000	24.9	0.000318	discard	Hybrid BM25 and Semantic RRF
+exp_002	discarded	0.600000	23.9	0.000324	discard	Hybrid BM25 and Semantic Scores
+exp_003	discarded	0.300000	11.7	0.000284	discard	Weighted title similarity boost
+exp_004	discarded	0.600000	10.8	0.000234	discard	Pure semantic search with reranking
+exp_005	discarded	0.600000	27.8	0.000327	discard	BM25 fallback and score integration
+exp_006	discarded	0.800000	11.9	0.000294	discard	Use vote average to rerank
+exp_007	discarded	0.600000	27.0	0.000295	discard	Boost BM25 with exact matches
+exp_008	discarded	0.600000	9.8	0.000234	discard	Simple semantic retrieval only
+exp_009	discarded	0.600000	25.1	0.000277	discard	Use wider pool, rank by BM25.
+exp_010	discarded	0.600000	21.0	0.000347	discard	Hybrid BM25 and vector integration.
+exp_011	discarded	0.700000	11.7	0.000303	discard	Re-rank candidates using vote average.
+exp_012	discarded	0.600000	24.9	0.000344	discard	BM25 score weighted candidate reranking
+exp_013	discarded	0.600000	25.5	0.000344	discard	Combine BM25 and vector scores
+exp_014	discarded	0.600000	27.2	0.000368	discard	BM25 score weighted candidate pool
+exp_015	discarded	0.400000	13.5	0.000342	discard	Weighted popularity and genre re-ranking
+exp_016	discarded	0.000000	62.4	0.000396	discard	RRF on BM25 and Vector
+exp_017	discarded	0.600000	25.3	0.000352	discard	Hybrid vector and BM25 scaling.
+exp_018	discarded	0.600000	28.2	0.000339	discard	Boost with normalized BM25 scores.
+exp_019	discarded	0.700000	8.0	0.000319	discard	Boost popularity by vote_average.
+exp_020	discarded	0.600000	12.5	0.000342	discard	Boosted search by normalized ratings and title word match.
+exp_021	discarded	0.600000	25.0	0.000322	discard	Rank by BM25, filter by semantic.
+exp_022	discarded	0.200000	13.9	0.000320	discard	RRF on title-boosted semantic candidates
+exp_023	discarded	0.500000	424.5	0.000323	discard	Use BM25 for retrieval, re-rank with vector similarity.
+exp_024	crash	0.000000	0.0	0.000396	crash	Ensemble BM25 and vector scores.
+exp_025	discarded	0.600000	13.4	0.000360	discard	Title similarity weight and semantic rank.
+exp_026	discarded	0.600000	12.2	0.000285	discard	BM25 only, simpler retrieval.
+exp_027	discarded	0.600000	29.4	0.000368	discard	Weight by semantic and BM25.
+exp_028	discarded	0.800000	11.2	0.000363	discard	Vector search with metadata reranking
+exp_029	discarded	0.700000	11.7	0.000333	discard	Weighted vote_average and vector boost
+exp_030	discarded	0.700000	26.7	0.000374	discard	Hybrid weighted semantic and BM25.
+exp_032	discarded	0.700000	10.8	0.000325	discard	Rank by vote-weighted semantic score.
+exp_033	discarded	0.700000	10.3	0.000337	discard	Boost precision via vote count weighting.
+exp_034	discarded	0.700000	8.2	0.000321	discard	Simple normalized semantic rank.
+exp_035	discarded	0.600000	24.3	0.000351	discard	# RRF with BM25 and Semantic
+exp_036	discarded	0.600000	12.9	0.000335	discard	Title-boosted FAISS candidate retrieval.
+exp_037	discarded	0.700000	12.6	0.000355	discard	Weighted semantic and vote score.
+exp_038	discarded	0.700000	12.5	0.000333	discard	Rerank using vote_average and distance.
+exp_039	discarded	0.600000	12.0	0.000281	discard	Simple semantic search, no reranking.
+exp_040	discarded	0.600000	20.0	0.000348	discard	Weighted BM25 and semantic rank
+exp_041	discarded	0.600000	10.6	0.000280	discard	# Pure semantic, minimal operations.
+exp_042	discarded	0.600000	12.5	0.000335	discard	# Use BM25 primary ranking
+exp_043	discarded	0.600000	11.5	0.000338	discard	# Filter by vote_average threshold.
+exp_044	discarded	0.600000	11.9	0.000363	discard	Boost semantic search with release date recency.
+exp_045	discarded	0.600000	22.3	0.000353	discard	Hybrid similarity with scalar scaling.
+exp_046	discarded	0.600000	27.3	0.000379	discard	Simple BM25 plus semantic RRF.
+exp_047	discarded	0.600000	21.1	0.000387	discard	# Hybrid retrieval: BM25 + Semantic
+exp_048	discarded	0.700000	26.4	0.000379	discard	Rank by weighted semantic and BM25.
+exp_049	discarded	0.600000	2332.0	0.000390	discard	Rank by BM25, filter semantic.
+exp_050	discarded	0.600000	141.9	0.000336	discard	# BM25 top 50, rerank vector
+exp_051	discarded	0.600000	11.6	0.000295	discard	Simplify semantic search performance
+exp_052	discarded	0.600000	10.5	0.000290	discard	# Pure semantic search, no reranking
+exp_053	discarded	0.600000	28.4	0.000295	discard	# Pure vector search, optimized retrieval.
+exp_054	discarded	0.600000	11.1	0.000296	discard	# Pure vector search with MinMax.
+exp_055	discarded	0.600000	10.4	0.000313	discard	# Scalar product similarity search
+exp_056	discarded	0.600000	11.4	0.000294	discard	# Optimized pure vector search
+exp_057	discarded	0.600000	12.0	0.000400	discard	# Semantic search with genre filter
+exp_058	discarded	0.600000	11.5	0.000295	discard	# Direct FAISS retrieval, no reranking
+exp_059	discarded	0.600000	24.8	0.000384	discard	# Pure FAISS with BM25 rerank
+exp_060	discarded	0.600000	12.1	0.000366	discard	# Vector search with genre bias
+exp_061	discarded	0.600000	14.2	0.000302	discard	# Pure BM25 retrieval
+exp_062	discarded	0.600000	11.9	0.000304	discard	# Optimized BM25 retrieval, no reranking
+exp_063	discarded	0.600000	24.9	0.000377	discard	# Hybrid retrieval with log-popularity
+exp_064	discarded	0.400000	24.4	0.000339	discard	# BM25 baseline with title-match boost
+exp_065	discarded	0.600000	11.7	0.000301	discard	# Simple pure semantic search
+exp_066	discarded	0.600000	13.5	0.000306	discard	# BM25 top_k retrieval only
+exp_067	discarded	0.600000	11.3	0.000305	discard	Pure semantic search, reduced candidate pool.
+exp_068	discarded	0.600000	11.2	0.000346	discard	# Vector search with index flat inner product
+exp_069	discarded	0.600000	11.6	0.000306	discard	# Pure FAISS with zero overhead
+exp_070	discarded	0.600000	11.2	0.000306	discard	Pure semantic search optimized.
+exp_071	discarded	0.400000	21.3	0.000347	discard	# BM25 baseline with title-overlap
+exp_072	discarded	0.100000	35.3	0.000379	discard	# BM25 boosted by semantic rank
+exp_073	discarded	0.600000	11.1	0.000323	discard	# Pure semantic search, no pandas
+exp_074	discarded	0.600000	7.6	0.000335	discard	Pure FAISS search using inner product.
+exp_075	discarded	0.600000	11.7	0.000310	discard	# Simple FAISS distance sort
+exp_076	discarded	0.600000	11.2	0.000312	discard	# FAISS raw search with no overhead
+exp_077	discarded	0.600000	12.5	0.000379	discard	# Pure FAISS with genre-match boosting.
+exp_078	discarded	0.600000	12.2	0.000313	discard	# Direct index search top k
+exp_079	discarded	0.600000	10.5	0.000327	discard	# Rank by inner product only
+exp_080	discarded	0.600000	138.3	0.000363	discard	# BM25 top 50, rerank semantic
+exp_081	discarded	0.600000	10.4	0.000319	discard	# Direct FAISS retrieval, no post-processing
+exp_082	discarded	0.300000	15.7	0.000393	discard	# Hybrid title exact-match boost
+exp_083	discarded	0.600000	11.1	0.000344	discard	# Pure vector search normalization
+exp_084	discarded	0.600000	11.3	0.000320	discard	# Pure FAISS with zero overhead
+exp_085	discarded	0.600000	11.4	0.000407	discard	# Semantic search with genre-overlap boost
+exp_086	discarded	0.600000	11.4	0.000323	discard	# Pure FAISS L2 search
+exp_087	discarded	0.600000	10.3	0.000323	discard	# Simple pure semantic search
+exp_088	discarded	0.600000	11.4	0.000393	discard	# Pure FAISS with genre-match boosting
+exp_089	discarded	0.600000	14.5	0.000346	discard	# Vector search using dot product
+exp_090	discarded	0.600000	10.7	0.000351	discard	# Semantic search using index inner product
+exp_091	discarded	0.600000	13.4	0.000344	discard	# Semantic search using index inner product
+exp_092	discarded	0.500000	2450.9	0.000417	discard	# BM25 word-frequency top-k rerank
+exp_093	discarded	0.600000	11.2	0.000333	discard	# Pure FAISS with distance filter
+exp_094	discarded	0.600000	12.1	0.000334	discard	# Pure FAISS L2 search
+exp_095	discarded	0.600000	65.5	0.000418	discard	# Hybrid BM25-Semantic log-weighted boost
+exp_096	discarded	0.600000	10.1	0.000334	discard	Pure FAISS L2 index search
+exp_097	discarded	0.600000	11.1	0.000334	discard	# Direct FAISS index search
+exp_098	discarded	0.600000	10.7	0.000348	discard	# Simple FAISS distance sort
+exp_099	discarded	0.600000	12.6	0.000396	discard	# Genre-aware semantic distance search
+exp_100	discarded	0.600000	12.8	0.000337	discard	# Semantic search index sort
+exp_101	discarded	0.600000	12.1	0.000410	discard	# Filter by genre, then FAISS
+exp_102	discarded	0.600000	11.3	0.000365	discard	# Pure FAISS with genre-match boosting
+exp_103	discarded	0.400000	11.3	0.000398	discard	# Pure FAISS with title-semantic re-ranking
+exp_104	discarded	0.600000	11.2	0.000393	discard	# Semantic search with title-exact boost
+exp_105	discarded	0.600000	11.6	0.000389	discard	# Semantic search with vote_count filter
+exp_106	discarded	0.600000	13.3	0.000395	discard	# Vector search with genre match boost
+exp_107	discarded	0.600000	24.5	0.000426	discard	# Hybrid BM25 and Semantic RRF
+exp_108	discarded	0.600000	13.4	0.000374	discard	# BM25 baseline with title boost
+exp_109	discarded	0.600000	11.2	0.000346	discard	# Pure FAISS L2 optimized
+exp_110	discarded	0.600000	11.7	0.000396	discard	# Pure FAISS with genre-metadata boosting
+exp_111	discarded	0.600000	10.3	0.000382	discard	# Semantic search using index inner product
+exp_112	discarded	0.600000	23.5	0.000432	discard	# Multi-stage semantic BM25 score
+exp_113	discarded	0.700000	52.7	0.000445	discard	# Hybridize BM25 and FAISS with L2 normalization
+exp_114	discarded	0.600000	12.0	0.000354	discard	# Pure FAISS L2 index search
+exp_115	discarded	0.600000	12.3	0.000357	discard	# Pure FAISS L2 search
+exp_116	discarded	0.600000	11.9	0.000358	discard	# Pure FAISS L2 search
+exp_117	discarded	0.600000	11.8	0.000369	discard	# Vector search with early exit
+exp_118	discarded	0.600000	11.4	0.000357	discard	# Direct index search top_k
+exp_119	discarded	0.400000	13.0	0.000423	discard	# Semantic search with title-weighting
+exp_120	discarded	0.600000	19.2	0.000385	discard	# BM25 baseline with title-boost
+exp_121	discarded	0.700000	10.7	0.000431	discard	# Pure FAISS with genre-metadata boosting
+exp_122	discarded	0.600000	10.9	0.000364	discard	# Rank by L2 distance only
+exp_123	discarded	0.600000	12.6	0.000361	discard	# Pure FAISS L2 Search
+exp_124	discarded	0.600000	11.4	0.000426	discard	# FAISS with genre bias
+exp_125	discarded	0.600000	13.1	0.000429	discard	# Pure FAISS with genre weighting
+exp_126	discarded	0.600000	11.9	0.000440	discard	# Optimized FAISS search with genre-masking
+exp_127	discarded	0.600000	12.8	0.000368	discard	# Pure index search with raw distance
+exp_128	discarded	0.100000	16.1	0.000418	discard	# Pure FAISS with genre-match filtering
+exp_129	discarded	0.700000	27.2	0.000442	discard	# Normalize distances and BM25 scores
+exp_130	discarded	0.600000	12.4	0.000369	discard	# Simple index search with early-exit
+exp_131	discarded	0.600000	12.4	0.000476	discard	# FAISS search with genre-overlap weighting
+exp_132	discarded	0.600000	27.6	0.000472	discard	# Multi-stage semantic BM25 score
+exp_133	discarded	0.600000	12.7	0.000372	discard	# Pure FAISS L2 Search
+exp_134	discarded	0.600000	11.7	0.000372	discard	# Pure semantic index search
+exp_135	discarded	0.600000	12.1	0.000429	discard	# Hybrid rerank with genre match
+exp_136	discarded	0.700000	12.6	0.000424	discard	# Re-ranking using vote_count significance
+exp_137	discarded	0.600000	28.8	0.000463	discard	# Hybrid BM25 and vector search
+exp_138	discarded	0.600000	12.8	0.000379	discard	# Pure FAISS L2 search
+exp_139	discarded	0.600000	16.1	0.000443	discard	# Genre-aware BM25 top-k retrieval
+exp_140	discarded	0.600000	12.5	0.000380	discard	# Simple index search with early-exit
+exp_141	discarded	0.600000	13.0	0.000431	discard	# Semantic search with vote_count filter
+exp_142	2489572	0.800000	11.5	0.000447	keep	# Rank by popularity-weighted distance
+exp_143	discarded	0.600000	13.9	0.000451	discard	# Rank by weighted semantic-genre correlation
+exp_144	discarded	0.600000	12.0	0.000440	discard	# Rank by similarity and genre density
+exp_145	discarded	0.700000	30.2	0.000469	discard	# Rank by BM25 and L2 distance
+exp_146	discarded	0.600000	26.6	0.000460	discard	# Rank by BM25 and index similarity
+exp_147	discarded	0.600000	11.2	0.000382	discard	# Pure FAISS L2 search
+exp_148	discarded	0.700000	12.9	0.000439	discard	Rank by index similarity and vote_average
+exp_149	discarded	0.600000	13.2	0.000501	discard	# Hybrid search: Index top-50, then re-rank by genre match
+exp_150	discarded	0.600000	26.4	0.000448	discard	# Use BM25-based semantic re-ranking
+exp_151	discarded	0.600000	26.5	0.000471	discard	# Rank by BM25 and L2
+exp_152	discarded	0.600000	12.8	0.000471	discard	# Multi-stage index search and rerank
+exp_153	discarded	0.600000	22.9	0.000481	discard	# Weighted BM25 and vector fusion
+exp_154	discarded	0.600000	18.3	0.000399	discard	# Retrieve top-k via BM25 only.
+exp_155	discarded	0.700000	29.6	0.000489	discard	# Rank by embedding and BM25 linear combination
+exp_156	discarded	0.200000	11.9	0.000456	discard	# Re-rank via content length and embedding
+exp_157	discarded	0.700000	28.0	0.000493	discard	# Hybrid BM25 and vector similarity ranking
+exp_158	discarded	0.700000	26.5	0.000510	discard	# Rank by BM25 and inner product
+exp_159	discarded	0.600000	11.4	0.000470	discard	# Semantic search with genre-boosted rerank
+exp_160	discarded	0.600000	26.1	0.000468	discard	# Rank by BM25 and normalized embedding
+exp_161	discarded	0.600000	28.3	0.000463	discard	# Retrieve top 50, rerank by BM25
+exp_162	discarded	0.600000	11.6	0.000499	discard	# Rank by L2 distance and genre-match count.
+exp_163	discarded	0.600000	14.5	0.000476	discard	# Rank by BM25, filter by release_date
+exp_164	discarded	0.600000	26.4	0.000489	discard	# Hybrid FAISS-BM25 via sigmoid fusion
+exp_165	discarded	0.600000	12.5	0.000495	discard	# Rank by semantic distance and genre overlap
+exp_166	discarded	0.600000	28.3	0.000489	discard	Rank by index and BM25 RRF
+exp_167	discarded	0.600000	23.4	0.000494	discard	# Multi-stage index and BM25 search
+exp_168	discarded	0.600000	13.0	0.000412	discard	# Pure index search with L2
+exp_169	discarded	0.700000	21.5	0.000512	discard	# Hybrid FAISS-BM25 linear combination
+exp_170	discarded	0.600000	616.9	0.000513	discard	# Multi-stage BM25 and semantic ranking
+exp_171	discarded	0.600000	30.0	0.000489	discard	# Rank by BM25 and L2
+exp_172	discarded	0.235294	19.3	0.000510	discard	# BM25 retrieve, re-rank with embedding
+exp_173	discarded	0.225490	7.1	0.000519	discard	# Pure FAISS with genre-match filtering
+exp_174	discarded	0.225490	10.4	0.000488	discard	# Semantic rerank with genres
+exp_175	discarded	0.235294	30.0	0.000529	discard	# RRF with genre-aware re-ranking
+exp_176	discarded	0.127451	8.0	0.000491	discard	# Semantic search with title similarity boost
+exp_177	discarded	0.205882	10.4	0.000543	discard	# BM25 retrieve, re-rank with genres
+exp_178	discarded	0.107843	8.1	0.000488	discard	# Re-rank via title-overlap and semantic
+exp_179	discarded	0.235294	19.4	0.000535	discard	# Hybrid BM25 and vector retrieval
+exp_180	discarded	0.107843	8.5	0.000499	discard	# Multi-stage index search and re-rank
+exp_181	discarded	0.225490	20.5	0.000486	discard	# Rerank via normalized BM25 score
+exp_182	discarded	0.225490	8.5	0.000498	discard	# Rank by weighted genre match
+exp_183	discarded	0.245098	19.2	0.000482	discard	# BM25 retrieve, re-rank with embedding
+exp_184	discarded	0.196078	8.0	0.000475	discard	# Semantic search with vote_count filter
+exp_185	discarded	0.245098	21.2	0.000534	discard	# Hybrid BM25 and vector reranking
+exp_186	discarded	0.274510	21.9	0.000530	discard	# Multi-stage BM25/FAISS expansion
+exp_187	discarded	0.245098	863.5	0.000518	discard	# Hybrid BM25-Semantic log-weighted boost
+exp_188	discarded	0.225490	9.3	0.000496	discard	# Query-based genre filter boost
+exp_189	discarded	0.176471	11.0	0.000523	discard	# Rank by BM25 and Genre overlap
+exp_190	discarded	0.245098	20.9	0.000521	discard	# Rank by embedding and BM25 linear combination
+exp_191	discarded	0.225490	9.5	0.000500	discard	# Semantic search with genre-boosted rerank
+exp_192	discarded	0.196078	12.1	0.000463	discard	# Use BM25 primary ranking
+exp_193	discarded	0.029412	22.2	0.000523	discard	# Rank by BM25 and genre
+exp_194	discarded	0.235294	215.4	0.000500	discard	# BM25 retrieve, rerank by semantic
+exp_195	discarded	0.196078	8.0	0.000446	discard	# Pure index search normalization
+exp_196	discarded	0.196078	8.6	0.000446	discard	# Pure FAISS L2 index search
+exp_197	discarded	0.196078	8.2	0.000505	discard	# Rank by genre match overlap
+exp_198	discarded	0.235294	20.8	0.000539	discard	# Hybrid FAISS-BM25 with dynamic score normalization
+exp_199	discarded	0.245098	21.7	0.000541	discard	# Hybrid BM25 and vector search
+exp_200	discarded	0.205882	24.7	0.000530	discard	# Hybrid BM25 and vector RRF
+exp_201	discarded	0.235294	20.4	0.000549	discard	# Rerank via normalized BM25 score
+exp_202	discarded	0.196078	8.1	0.000452	discard	# Pure FAISS with distance sort
+exp_203	discarded	0.225490	21.4	0.000534	discard	# Semantic search, re-rank by BM25
+exp_204	discarded	0.254902	21.4	0.000570	discard	# Multi-stage BM25 and Genre-Boosted FAISS
+exp_205	crash	0.000000	0.0	0.000559	crash	# Multi-stage BM25-semantic retrieval
+exp_206	discarded	0.117647	11.6	0.000579	discard	# Boost by genre and title
+exp_207	discarded	0.186275	1051.3	0.000607	discard	# Rank by BM25, filter by semantic
+exp_208	discarded	0.196078	10.2	0.000542	discard	# Hybrid retrieval with genre-boost
+exp_209	discarded	0.245098	10.4	0.000583	discard	# Use title-overview embedding ensemble
+exp_210	discarded	0.117647	7.8	0.000547	discard	# Pure FAISS with title-semantic re-ranking
+exp_211	discarded	0.235294	20.8	0.000557	discard	# Scalar BM25-Semantic fusion search
+exp_212	discarded	0.196078	13.8	0.000484	discard	# Pure BM25 retrieval, top 100
+exp_213	discarded	0.245098	1051.8	0.000556	discard	# Multi-stage BM25 retrieval, L2 re-rank
+exp_214	discarded	0.196078	11.7	0.000543	discard	# BM25 retrieve, re-rank by genre
+exp_215	discarded	0.196078	8.9	0.000547	discard	# Semantic search with genre-boost
+exp_216	discarded	0.284314	122.2	0.000522	discard	# BM25 retrieve, re-rank by embedding
+exp_217	discarded	0.196078	10.1	0.000542	discard	# Semantic search with genre-boost
+exp_218	discarded	0.245098	21.2	0.000566	discard	# Ensemble BM25 and vector search
+exp_219	discarded	0.254902	22.9	0.000573	discard	# Weighted BM25 and semantic RRF
+exp_220	discarded	0.196078	10.2	0.000540	discard	# Multi-stage index expansion rank
+exp_221	discarded	0.196078	10.8	0.000539	discard	# Rank by BM25, boost with popularity
+exp_222	discarded	0.196078	8.7	0.000484	discard	# Optimized pure FAISS retrieval
+exp_223	discarded	0.205882	195.6	0.000572	discard	# Multi-pass semantic reranking
+exp_224	discarded	0.196078	7.8	0.000481	discard	# Pure FAISS L2 Search
+exp_225	discarded	0.196078	8.0	0.000482	discard	# Pure FAISS with distance sort
+exp_226	discarded	0.117647	8.9	0.000585	discard	# Title-semantic similarity ensemble
+exp_227	discarded	0.196078	7.8	0.000486	discard	# Pure FAISS L2 search
+exp_228	discarded	0.196078	11.1	0.000489	discard	# Use BM25 primary retrieval
+exp_229	crash	0.000000	0.0	0.000554	crash	# BM25 retrieve, rerank by vote
+exp_230	discarded	0.196078	7.8	0.000506	discard	# Pure FAISS L2 search
+exp_231	discarded	0.196078	7.9	0.000506	discard	# Pure FAISS L2 search
+exp_232	discarded	0.196078	8.1	0.000507	discard	# Pure FAISS L2 search
+exp_233	discarded	0.196078	7.9	0.000567	discard	# Genre-weighted semantic search
+exp_234	discarded	0.196078	7.9	0.000554	discard	# Normalize similarity with genre weight
+exp_235	discarded	0.196078	9.0	0.000530	discard	# FAISS inner product search
+exp_236	discarded	0.196078	7.8	0.000508	discard	# Pure FAISS L2 search
+exp_237	discarded	0.196078	19.7	0.000591	discard	# Rank by BM25 and RRF
+exp_238	discarded	0.196078	8.3	0.000511	discard	# Pure FAISS L2 search
+exp_239	discarded	0.196078	8.4	0.000514	discard	# Simple FAISS distance search
+exp_240	discarded	0.196078	9.3	0.000495	discard	# Pure FAISS L2 search
+exp_241	discarded	0.245098	561.1	0.000577	discard	# BM25 retrieve, re-rank embedding
+exp_242	discarded	0.196078	7.7	0.000498	discard	# Pure FAISS L2 Search
+exp_243	discarded	0.196078	7.9	0.000501	discard	# Pure FAISS L2 Search
+exp_244	discarded	0.254902	20.2	0.000565	discard	# Search top 20, rerank BM25
+exp_245	discarded	0.196078	8.0	0.000502	discard	# Pure FAISS L2 search
+exp_246	discarded	0.196078	8.0	0.000506	discard	# Pure FAISS L2 Search
+exp_247	discarded	0.245098	20.9	0.000579	discard	# Hybrid BM25 and vector search
+exp_248	discarded	0.196078	7.4	0.000508	discard	# Pure FAISS L2 search
+exp_249	discarded	0.196078	11.4	0.000575	discard	# BM25 retrieve, re-rank genres
+exp_250	discarded	0.196078	8.1	0.000508	discard	# Pure FAISS L2 Search
+exp_251	discarded	0.196078	8.6	0.000516	discard	# Pure index search normalization
+exp_252	discarded	0.245098	20.5	0.000598	discard	# Hybrid BM25 and vector search
+exp_253	discarded	0.205882	8.1	0.000585	discard	# Genre-weighted semantic similarity rank
+exp_254	discarded	0.196078	11.0	0.000570	discard	# BM25 retrieve, re-rank genres
+exp_255	discarded	0.245098	130.9	0.000591	discard	# BM25 retrieve, re-rank embedding
+exp_256	discarded	0.254902	20.6	0.000558	discard	# Simple index search reranked
+exp_257	discarded	0.196078	7.2	0.000516	discard	# Pure FAISS L2 search
+exp_258	discarded	0.235294	20.2	0.000589	discard	# BM25 retrieve, re-rank embedding
+exp_259	discarded	0.196078	9.0	0.000581	discard	# Rank by genre match overlap
+exp_260	discarded	0.196078	8.1	0.000594	discard	# Weighted genre semantic search
+exp_261	crash	0.000000	0.0	0.000585	crash	# Rank by release_date recency
+exp_262	discarded	0.196078	12.0	0.000538	discard	# Pure FAISS L2 search
+exp_263	discarded	0.245098	549.0	0.000624	discard	# BM25 retrieve, rerank FAISS
+exp_264	discarded	0.225490	8.1	0.000607	discard	# FAISS index with genre boost
+exp_265	discarded	0.196078	10.7	0.000559	discard	# Simple BM25 index search
+exp_266	discarded	0.284314	496.7	0.000620	discard	# BM25 retrieve, re-rank embedding
+exp_267	discarded	0.196078	11.3	0.000574	discard	# Pure BM25 with title boost
+exp_268	discarded	0.196078	11.1	0.000545	discard	# Pure FAISS L2 search
+exp_269	discarded	0.235294	20.7	0.000638	discard	# Use BM25-based semantic re-ranking
+exp_270	discarded	0.372549	20.6	0.000660	discard	# Rank by BM25 and popularity
+exp_271	discarded	0.215686	21.6	0.000680	discard	# Multi-stage BM25 and Genre-Boosted FAISS
+exp_272	discarded	0.235294	21.7	0.000630	discard	# Rank by BM25 and similarity
+exp_273	discarded	0.196078	11.0	0.000599	discard	# BM25 retrieve, re-rank genres
+exp_274	discarded	0.176471	20.1	0.000595	discard	# Rank by BM25 and genres
+exp_275	discarded	0.196078	7.6	0.000548	discard	# Search only, top-k inner product
+exp_276	discarded	0.245098	22.3	0.000642	discard	# Hybrid BM25 and vector fusion
+exp_277	discarded	0.235294	210.7	0.000604	discard	# BM25 retrieve, re-rank embedding
+exp_278	discarded	0.245098	923.5	0.000643	discard	# Normalized BM25-Semantic fusion
+exp_279	discarded	0.245098	512.7	0.000637	discard	# BM25 retrieve, re-rank embedding
+exp_280	discarded	0.205882	16.1	0.000589	discard	# BM25 retrieve, re-rank genres
+exp_281	discarded	0.205882	41.0	0.000625	discard	# BM25 retrieve, re-rank genres
+exp_282	discarded	0.196078	13.8	0.000641	discard	# BM25 retrieve, re-rank genres
+exp_283	discarded	0.245098	120.3	0.000601	discard	# BM25 retrieve, re-rank embedding
+exp_284	discarded	0.196078	187.9	0.000590	discard	# Rerank FAISS by text similarity
+exp_285	discarded	0.196078	11.1	0.000615	discard	# BM25 retrieve, re-rank genres
+exp_286	discarded	0.196078	12.4	0.000630	discard	# Rank by BM25 and genres
+exp_287	discarded	0.235294	23.0	0.000659	discard	# Hybrid RRF on BM25/FAISS
+exp_288	discarded	0.196078	8.1	0.000556	discard	# Pure semantic retrieval only
+exp_289	crash	0.000000	0.0	0.000632	crash	# BM25 retrieve, re-rank embedding
+exp_290	discarded	0.196078	8.5	0.000573	discard	# Pure FAISS L2 search
+exp_291	discarded	0.225490	7.9	0.000646	discard	# Rank by genre string similarity
+exp_292	discarded	0.245098	20.7	0.000640	discard	# Hybrid BM25 and vector search
+exp_293	discarded	0.264706	21.1	0.000683	discard	# Hybrid retrieval with genre weight

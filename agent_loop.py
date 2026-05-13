@@ -1,4 +1,5 @@
 # agent_loop.py
+import ast
 import time
 import sys
 import os
@@ -54,6 +55,17 @@ OBJECTIVE_TO_PROFILE = {
     "pareto":  "balanced",
     "cost":    "low_cost",
 }
+
+# FIX 2 — Cross-objective seeding.
+# When starting pareto or latency runs, seed from the best recall profile
+# so the agent refines a strong baseline rather than starting from scratch.
+OBJECTIVE_SEED_FROM = {
+    "pareto":  "high_recall",   # trim latency without dropping recall
+    "latency": "high_recall",   # same logic — start strong, get faster
+    "cost":    "balanced",      # balanced is a reasonable cost baseline
+    "recall":  None,            # no cross-seeding — own objective
+}
+
 
 def get_llm_cost(response):
     input_tokens  = response.usage.prompt_tokens
@@ -286,7 +298,6 @@ def ensure_results_header():
         with open("results.tsv", "r") as f:
             content = f.read()
         old_lines = content.split("\n")
-        # Replace header, keep data rows
         new_lines = [RESULTS_HEADER.strip()] + old_lines[1:]
         with open("results.tsv", "w") as f:
             f.write("\n".join(new_lines))
@@ -392,6 +403,7 @@ def call_api(messages, retries=3):
         try:
             return client.chat.completions.create(
                 model=MODEL,
+                max_tokens=4096,        # FIX 4 — prevent truncated code generation
                 messages=messages
             )
         except Exception as e:
@@ -445,6 +457,69 @@ def parse_agent_response(raw):
 
     return description, code
 
+# FIX — AST-based code feature extraction.
+# Replaces hardcoded string matching with deterministic AST parsing.
+# Catches anything the agent writes, not just what we anticipated.
+# Limitation: variable names may be low-signal (e.g. "Variable: scores").
+# Mitigated by only surfacing top-level assignments and function names.
+def extract_code_features(search_py: str) -> str:
+    """
+    Deterministically extract what's in search.py using AST parsing.
+    Returns a formatted string for injection into the agent prompt.
+    Falls back gracefully if the file has a syntax error.
+    """
+    try:
+        tree = ast.parse(search_py)
+    except SyntaxError:
+        # Broken search.py — agent wrote invalid code last round.
+        # eval will also fail and the run will be rejected, so this
+        # is just informational for the prompt.
+        return "  (could not parse — search.py has a syntax error)"
+
+    features = []
+    seen     = set()
+
+    for node in ast.walk(tree):
+        # Helper functions the agent defined beyond the required search() entrypoint
+        if isinstance(node, ast.FunctionDef):
+            if node.name != "search":
+                feat = f"Function: {node.name}()"
+                if feat not in seen:
+                    seen.add(feat)
+                    features.append(feat)
+
+        # All imports — catches any library the agent pulled in
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                feat = f"Import: {alias.name}"
+                if feat not in seen:
+                    seen.add(feat)
+                    features.append(feat)
+
+        elif isinstance(node, ast.ImportFrom):
+            feat = f"Import: from {node.module} import ..."
+            if feat not in seen:
+                seen.add(feat)
+                features.append(feat)
+
+        # Top-level variable assignments only — skips loop vars and temporaries.
+        # isinstance check on col_offset==0 isolates module-level assignments.
+        elif (
+            isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and getattr(node, "col_offset", 1) == 0
+        ):
+            feat = f"Variable: {node.targets[0].id}"
+            if feat not in seen:
+                seen.add(feat)
+                features.append(feat)
+
+    # Cap at 20 to avoid prompt bloat on very complex files
+    features = features[:20]
+
+    return "\n".join(f"  - {f}" for f in features) if features else "  (none detected)"
+
+
 def ask_agent(program_md, search_py, history, objective):
     """Ask LLM for next search.py modification. Returns (code, cost, description, prompt)."""
 
@@ -456,20 +531,8 @@ def ask_agent(program_md, search_py, history, objective):
     ]
     tried_str = "\n".join(f"  - {d}" for d in tried_descriptions) if tried_descriptions else "  (none yet)"
 
-    already_in_code = []
-    if "BM25Okapi(df['title']" in search_py or "title_bm25" in search_py:
-        already_in_code.append("Title-boosted BM25")
-    if "rrf" in search_py.lower() or "1 / (" in search_py:
-        already_in_code.append("Reciprocal Rank Fusion (RRF)")
-    if "vote_count" in search_py or "vote_average" in search_py:
-        already_in_code.append("Vote score boosting")
-    if "top_k * 1" in search_py:
-        already_in_code.append("Large candidate pool")
-    if "cosine" in search_py.lower():
-        already_in_code.append("Cosine similarity")
-    if "genres" in search_py:
-        already_in_code.append("Genre boosting")
-    already_str = "\n".join(f"  - {s}" for s in already_in_code) if already_in_code else "  (none detected)"
+    # FIX — replaced hardcoded string matching with AST-based extraction
+    already_str = extract_code_features(search_py)
 
     objective_guidance = {
         "recall":  "Maximize recall@10. Latency and cost are secondary.",
@@ -533,8 +596,40 @@ No markdown fences. No explanation. Just the description comment then the code.
     return code, cost, description, prompt
 
 # ─── ARCHITECTURE DOCUMENTATION ─────────────────────────────
+
+# FIX 3 — Live architecture updates on every KEEP.
+# No LLM call — just writes a metrics summary so the file is never stale
+# even if the run is interrupted. The full LLM-generated doc is written
+# at the end of the loop as before.
+def update_architecture_file(objective, best_metrics, baseline_metrics, n_kept, n_total):
+    """
+    Write a lightweight metrics summary on every KEEP.
+    No LLM call — deterministic and fast.
+    Overwrites any previous version so the file always reflects current best.
+    """
+    filename = f"ARCHITECTURE_{objective}.md"
+    content  = f"""# Architecture — {objective}
+*Auto-updated on every KEEP. Full LLM-generated doc written at run end.*
+
+## Current best
+| Metric | Baseline | Best |
+|--------|----------|------|
+| recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
+| latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
+| llm_cost | ${baseline_metrics['llm_cost_usd']:.6f} | ${best_metrics['llm_cost_usd']:.6f} |
+
+## Progress
+- Experiments kept : {n_kept}
+- Total so far     : {n_total}
+
+*See experiments/log.jsonl for full history. See search_profiles/{OBJECTIVE_TO_PROFILE.get(objective)}.py for winning implementation.*
+"""
+    write_file(filename, content)
+    print(f"   📄 Architecture updated → {filename}")
+
+
 def document_architecture(best_metrics, baseline_metrics, objective, n_experiments, history):
-    """Generate ARCHITECTURE_<objective>.md at end of run."""
+    """Generate full LLM-written ARCHITECTURE_<objective>.md at end of run."""
     print("\n📄 Documenting final architecture...")
 
     search_py = read_file("search.py")
@@ -614,7 +709,35 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     print(f"Tracking     : recall | latency_ms | llm_cost_usd  (separately)")
     print("=" * 60)
 
-    # ── Baseline ──
+    # FIX 1 — Seed search.py from best prior profile for this objective.
+    # Without this, every new run restarts from whatever search.py happens
+    # to be on disk, which may be the original baseline rather than the
+    # 0.900 recall implementation found in a previous run.
+    best_prior = best_from_history(history, objective)
+    if best_prior:
+        profile_name = OBJECTIVE_TO_PROFILE.get(objective)
+        profile_path = f"search_profiles/{profile_name}.py"
+        if os.path.exists(profile_path):
+            shutil.copy(profile_path, "search.py")
+            print(f"   📂 Seeded search.py from {profile_path}")
+        else:
+            print(f"   ⚠️  Profile {profile_path} not found — using current search.py")
+    else:
+        # FIX 2 — Cross-objective seeding.
+        # If no prior experiments exist for this objective, seed from a
+        # related objective's best profile instead of starting cold.
+        # e.g. pareto run seeds from high_recall so it refines a strong
+        # baseline rather than rediscovering recall improvements from scratch.
+        seed_profile = OBJECTIVE_SEED_FROM.get(objective)
+        if seed_profile:
+            seed_path = f"search_profiles/{seed_profile}.py"
+            if os.path.exists(seed_path):
+                shutil.copy(seed_path, "search.py")
+                print(f"   📂 Cross-objective seed: {seed_path} → search.py")
+            else:
+                print(f"   ⚠️  Seed profile {seed_path} not found — using current search.py")
+
+    # ── Baseline — measure what's on disk right now ──
     print("\n📊 Running baseline...")
     baseline_recall, baseline_latency = run_eval()
     baseline_metrics = {
@@ -625,8 +748,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     print(f"recall@10    : {baseline_recall:.6f}")
     print(f"latency      : {baseline_latency:.1f}ms")
 
-    # ── Resume from best prior result for this objective ──
-    best_prior = best_from_history(history, objective)
+    # ── Resume best_metrics from history or use baseline ──
     if best_prior:
         best_metrics = best_prior["metrics"].copy()
         print(
@@ -730,6 +852,12 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 "metrics":     new_metrics,
                 "status":      "keep"
             })
+
+            # FIX 3 — Write live architecture summary on every KEEP.
+            # No LLM call — just metrics. Survives interrupted runs.
+            n_kept = len([r for r in history if r["status"] == "keep"])
+            update_architecture_file(objective, best_metrics, baseline_metrics, n_kept, i + 1)
+
         else:
             git_restore()
             log_result(exp_id, "discarded", new_metrics, "discard", description)
@@ -741,7 +869,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 "status":      "discard"
             })
 
-    # ── Document final architecture ──
+    # ── Document final architecture (full LLM-generated version) ──
     document_architecture(best_metrics, baseline_metrics, objective, n_experiments, history)
 
     # ── Summary ──
@@ -808,7 +936,6 @@ if __name__ == "__main__":
         replay_experiment(args.replay)
 
     elif args.export_profile:
-        # Manually export current search.py as a profile
         recall, latency = run_eval()
         metrics = {"recall": recall, "latency_ms": latency, "llm_cost_usd": 0.0}
         update_profile(args.export_profile, metrics, "manually exported")

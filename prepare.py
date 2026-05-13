@@ -40,6 +40,207 @@ BENCHMARK_QUERIES = [
         "query": "time machine going back to the future paradox",
         "expected": ["Back to the Future", "Looper"]
     },
+    {
+    "query": "mafia family crime saga generational power",
+    "expected": ["The Godfather", "Goodfellas"]
+    },
+    {
+        "query": "animated toys come to life friendship adventure",
+        "expected": ["Toy Story"]
+    },
+    {
+        "query": "superhero billionaire dark knight vigilante Gotham",
+        "expected": ["The Dark Knight", "Batman Begins"]
+    },
+    {
+        "query": "survival horror haunted hotel writer isolation",
+        "expected": ["The Shining"]
+    },
+    {
+        "query": "world war two soldiers beach landing Normandy",
+        "expected": ["Saving Private Ryan", "Dunkirk"]
+    },
+    {
+        "query": "teenage high school prom coming of age awkward",
+        "expected": ["Superbad", "Mean Girls"]
+    },
+    {
+        "query": "princess fairy tale kingdom true love musical",
+        "expected": ["Beauty and the Beast", "Cinderella"]
+    },
+    {
+        "query": "heist bank robbery crew planning elaborate escape",
+        "expected": ["Heat", "The Italian Job"]
+    },
+    {
+        "query": "boxing underdog champion training perseverance",
+        "expected": ["Rocky", "Creed"]
+    },
+    {
+        "query": "space western bounty hunter frontier planets",
+        "expected": ["Guardians of the Galaxy", "Firefly"]
+    },
+    # CRIME / THRILLER
+    {
+        "query": "con artist identity fraud elaborate deception scheme",
+        "expected": ["Catch Me If You Can", "The Sting"]
+    },
+    {
+        "query": "detective serial killer psychological cat and mouse",
+        "expected": ["Se7en", "Silence of the Lambs"]
+    },
+    {
+        "query": "lawyer courtroom trial justice wrongful conviction",
+        "expected": ["A Few Good Men", "12 Angry Men"]
+    },
+    {
+        "query": "hitman assassin contract killing redemption",
+        "expected": ["Leon The Professional", "John Wick"]
+    },
+    {
+        "query": "drug cartel kingpin empire rise and fall",
+        "expected": ["Scarface", "Traffic"]
+    },
+
+    # SCI-FI (different from what you have)
+    {
+        "query": "alien invasion earth military resistance war",
+        "expected": ["Independence Day", "War of the Worlds"]
+    },
+    {
+        "query": "dystopian future society control rebellion uprising",
+        "expected": ["The Matrix", "Divergent"]
+    },
+    {
+        "query": "time loop same day repeating stuck",
+        "expected": ["Groundhog Day", "Edge of Tomorrow"]
+    },
+    {
+        "query": "virtual reality simulation video game trapped",
+        "expected": ["Ready Player One", "Tron"]
+    },
+    {
+        "query": "cloning genetic engineering identity human experiment",
+        "expected": ["Never Let Me Go", "The Island"]
+    },
+
+    # DRAMA
+    {
+        "query": "prison escape wrongful conviction freedom hope",
+        "expected": ["The Shawshank Redemption", "The Green Mile"]
+    },
+    {
+        "query": "stock market wall street greed financial corruption",
+        "expected": ["The Wolf of Wall Street", "Margin Call"]
+    },
+    {
+        "query": "road trip self discovery friendship cross country",
+        "expected": ["Little Miss Sunshine", "Into the Wild"]
+    },
+    {
+        "query": "mental illness bipolar schizophrenia family struggle",
+        "expected": ["A Beautiful Mind", "Silver Linings Playbook"]
+    },
+    {
+        "query": "musician rockstar rise fame addiction downfall",
+        "expected": ["Bohemian Rhapsody", "Almost Famous"]
+    },
+
+    # ROMANCE
+    {
+        "query": "forbidden love star crossed romance tragedy",
+        "expected": ["Romeo and Juliet", "Titanic"]
+    },
+    {
+        "query": "long distance relationship reunited second chance love",
+        "expected": ["The Notebook", "Sleepless in Seattle"]
+    },
+    {
+        "query": "romantic comedy misunderstanding enemies to lovers",
+        "expected": ["When Harry Met Sally", "10 Things I Hate About You"]
+    },
+
+    # HORROR
+    {
+        "query": "zombie apocalypse survival group undead outbreak",
+        "expected": ["28 Days Later", "Dawn of the Dead"]
+    },
+    {
+        "query": "supernatural demon possession exorcism religious horror",
+        "expected": ["The Exorcist", "Conjuring"]
+    },
+    {
+        "query": "slasher masked killer teenagers summer camp",
+        "expected": ["Friday the 13th", "Halloween"]
+    },
+    {
+        "query": "found footage paranormal haunting home camera",
+        "expected": ["Paranormal Activity", "The Blair Witch Project"]
+    },
+
+    # ACTION / ADVENTURE
+    {
+        "query": "spy espionage secret agent government mission",
+        "expected": ["James Bond", "Mission Impossible"]
+    },
+    {
+        "query": "treasure hunt ancient ruins archaeology adventure",
+        "expected": ["Indiana Jones", "National Treasure"]
+    },
+    {
+        "query": "superhero team assemble save world threat",
+        "expected": ["The Avengers", "Justice League"]
+    },
+    {
+        "query": "martial arts kung fu master student training",
+        "expected": ["The Karate Kid", "Crouching Tiger Hidden Dragon"]
+    },
+
+    # ANIMATION
+    {
+        "query": "fish ocean lost family underwater adventure",
+        "expected": ["Finding Nemo", "Finding Dory"]
+    },
+    {
+        "query": "lion cub king pride savanna betrayal",
+        "expected": ["The Lion King"]
+    },
+    {
+        "query": "monsters children scream factory parallel world",
+        "expected": ["Monsters Inc"]
+    },
+    {
+        "query": "robot waste earth alone love story future",
+        "expected": ["WALL-E"]
+    },
+
+    # HISTORICAL / BIOGRAPHY
+    {
+        "query": "world war two jewish holocaust survival hiding",
+        "expected": ["Schindler's List", "The Pianist"]
+    },
+    {
+        "query": "civil rights movement racism segregation protest",
+        "expected": ["Selma", "42"]
+    },
+    {
+        "query": "NASA space race moon landing engineers scientists",
+        "expected": ["Hidden Figures", "First Man"]
+    },
+    {
+        "query": "tech startup silicon valley genius billionaire founder",
+        "expected": ["The Social Network", "Jobs"]
+    },
+
+    # COMEDY
+    {
+        "query": "wedding chaos family reunion dysfunction humor",
+        "expected": ["The Wedding Crashers", "Four Weddings and a Funeral"]
+    },
+    {
+        "query": "office workplace boss employee absurd humor",
+        "expected": ["Office Space", "Horrible Bosses"]
+    },
 ]
 
 # ─── DATA PREP (run once) ──────────────────────────────────

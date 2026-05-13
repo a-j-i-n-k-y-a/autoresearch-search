@@ -6,8 +6,8 @@
 PROFILES = {
     "high_recall": {
         "module": "search_profiles.high_recall",
-        "recall": 0.9,
-        "latency_ms": 61.67259216308594,
+        "recall": 0.441176,
+        "latency_ms": 14.615409514483284,
         "cost_usd": 0.0,
         "description": "maximize recall — best for full search pages",
         "objective": "recall",
@@ -15,8 +15,8 @@ PROFILES = {
     },
     "low_latency": {
         "module": "search_profiles.low_latency",
-        "recall": 0.7,
-        "latency_ms": 37.213945388793945,
+        "recall": 0.441176,
+        "latency_ms": 15.369649026908126,
         "cost_usd": 0.0,
         "description": "minimize latency — fastest response",
         "objective": "latency",
@@ -24,8 +24,8 @@ PROFILES = {
     },
     "balanced": {
         "module": "search_profiles.balanced",
-        "recall": 0.8,
-        "latency_ms": 35.646772384643555,
+        "recall": 0.441176,
+        "latency_ms": 11.77368912042356,
         "cost_usd": 0.0,
         "description": "best recall/latency tradeoff",
         "objective": "pareto",
