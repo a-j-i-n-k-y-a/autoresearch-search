@@ -1,34 +1,36 @@
 # Architecture
 
 ## What it does
-The system performs a hybrid semantic search for movies by combining vector-based similarity (via FAISS) with a popularity-based re-ranking mechanism. It retrieves an expanded candidate set from the semantic index and refines the ranking using the movie's `vote_count` to ensure that relevant, well-established content is prioritized.
+The system implements a high-performance, popularity-aware semantic search engine for movies. It retrieves candidates using dense vector embeddings and performs real-time re-ranking by combining semantic similarity scores with log-transformed popularity metrics to balance relevance and user interest.
 
 ## Components
-*   **Vector Retrieval:** Uses a pre-trained sentence transformer model to encode queries into a dense vector space, querying a FAISS index for high-dimensional similarity.
-*   **Candidate Expansion:** Retrieves 5x the target `top_k` candidates to create a sufficient pool for re-ranking without compromising latency.
-*   **Popularity-Weighting:** Applies a log-transformation (`log1p`) to `vote_count` to dampen the effect of extreme outliers while favoring popular titles.
-*   **Ranking Logic:** Combines inverted L2 distance with normalized popularity scores: `(1.0 / (1.0 + dist)) + (log_pop * 0.05)`.
+- **FAISS Index**: Performs rapid Approximate Nearest Neighbor (ANN) search on movie embeddings to retrieve a candidate pool ($5 \times \text{top\_k}$).
+- **Encoder**: A pre-trained transformer model that maps natural language queries into the same vector space as the movie database.
+- **Popularity Scorer**: Calculates a score based on $log(1 + \text{vote\_count})$ to normalize the impact of extremely popular movies without drowning out relevant niche results.
+- **Ranker**: A fusion module that calculates a hybrid score: $\text{score} = \frac{1}{1 + \text{dist}} + (\text{pop} \times 0.05)$.
 
 ## Why it works
-The architecture avoids the high computational overhead of multi-stage hybrid models (like BM25 + Vector fusion). By expanding the initial search pool and applying a lightweight, mathematically simple popularity boost, the system achieves a balance between "semantic relevance" (vector similarity) and "user trust" (popularity). This approach optimizes for low latency while significantly improving recall compared to baseline methods.
+By over-fetching candidates (searching for 50 items to return 10), the system creates a search "buffer." This allows us to inject global metadata (popularity) into the ranking process without losing the semantic precision provided by the embedding model. The log-transformation of vote counts prevents "blockbuster bias" while ensuring highly-voted, relevant movies rank higher than obscure ones with similar semantic scores.
 
 ## Tradeoffs
-*   **Complexity vs. Performance:** The system trades the potential precision gains of complex hybrid retrieval (e.g., RRF) for architectural simplicity and speed.
-*   **Bias:** The inclusion of `vote_count` inherently biases the system toward older, established movies, which may suppress niche or newly released content that has not yet gathered sufficient votes.
+- **Candidate Pool Size**: Fixed at 50 to maintain sub-15ms latency; increasing this would improve recall but degrade real-time performance.
+- **Normalization Factor**: The 0.05 weight assigned to popularity is a heuristic; while effective for this dataset, it may require tuning if the distribution of `vote_count` changes significantly.
 
 ## Key experiments
-*   **Hybrid RRF Attempts:** Repeatedly showed that complex multi-model scoring (BM25 + Semantic) increased latency significantly without linear gains in recall.
-*   **Popularity Boosting:** The discovery that using `vote_count` as a logarithmic weight on the distance-based score provided a substantial jump in recall (from 0.4 to 0.8) while keeping latency under 12ms.
-*   **Pool Expansion:** Experimenting with a `top_k * 5` retrieval pool proved optimal, providing enough variety to allow popularity re-ranking to effectively move better results into the final `top_k`.
+- **Baseline**: Established the initial vector-only search performance.
+- **Candidate Expansion**: Moving from 10 to 50 candidates proved essential for enabling effective re-ranking.
+- **Popularity Integration**: Successfully replaced complex, high-latency hybrid models (like RRF or BM25 combinations) with a simple, computationally cheap log-normalized popularity boost.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.412 | 0.800 |
-| latency_ms | 14.8 | 11.5 |
+| latency_ms | 13.3 | 11.5 |
 
 ## How to run
-Ensure the `df` (containing `vote_count`), `model` (embedding model), and `index` (FAISS) are loaded. Call the search function:
-```python
-results = search(query, df, bm25, model, index, top_k=10)
-```
+1. Ensure the FAISS index is built and the `pandas` DataFrame is loaded.
+2. Initialize the model encoder.
+3. Pass the query to the `search()` function:
+   ```python
+   results = search("science fiction space odyssey", df, bm25, model, index, top_k=10)
+   ```
