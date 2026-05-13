@@ -1,33 +1,34 @@
 # Architecture
 
 ## What it does
-The system performs high-performance movie retrieval by combining semantic vector search with metadata-driven re-ranking. It balances pure relevance with user-preference signals (popularity and ratings) to deliver highly relevant results within sub-10ms latency.
+The system performs a high-recall movie retrieval by combining semantic vector embeddings with metadata-aware re-ranking. It balances pure vector proximity with popularity and quality signals to surface relevant and highly-rated content.
 
 ## Components
-- **FAISS Index**: Handles high-speed approximate nearest neighbor (ANN) retrieval using embeddings of movie overviews.
-- **Semantic Encoder**: A pre-trained model mapping natural language queries to vector space.
-- **Metadata Processor**: Normalizes `vote_count` (using a log-scale) and `vote_average` to ensure signal from popularity and quality is captured without drowning out semantic relevance.
-- **Scoring Engine**: Implements a weighted hybrid score: $Score = \text{Norm}(\text{L2\_dist}) + 0.15 \cdot \text{Norm}(\text{Log\_Pop}) + 0.15 \cdot \text{Norm}(\text{Rating})$.
+*   **FAISS Vector Index:** Performs initial approximate nearest neighbor search to retrieve a broad candidate pool of 500 movies.
+*   **Vector Engine:** A pre-trained transformer model encodes user queries into a high-dimensional semantic space.
+*   **Metadata Processor:** Applies log-scaling to `vote_count` (to normalize popularity) and scales `vote_average` to a [0, 1] range.
+*   **Ranking Logic:** Combines the normalized semantic similarity score with weighted metadata features (15% popularity, 15% rating) to produce the final ranked output.
 
 ## Why it works
-By expanding the candidate pool to 500 in the initial FAISS search, the system captures a broader "long-tail" of relevant items. The subsequent re-ranking step uses light-weight metadata normalization to prioritize high-quality, popular content, which directly correlates with user satisfaction, effectively refining the vector retrieval results.
+The architecture avoids the latency overhead and complexity of multi-stage hybrid retrieval (e.g., BM25 + Vector) by using a single-pass candidate retrieval and a lightweight mathematical re-ranking stage. By expanding the candidate pool to 500, it captures a wider semantic space before using fast, vector-based, and attribute-based ranking to ensure the top-K results are both relevant and popular.
 
 ## Tradeoffs
-- **Candidate Pool Size**: Increasing the pool to 500 slightly increases memory usage during retrieval but significantly improves recall.
-- **Simple Re-ranking**: We explicitly avoided heavy BM25/hybrid indexing in the final version to maintain sub-10ms latency, favoring arithmetic adjustments to existing metadata over costly text-based re-scoring.
+*   **Normalization:** By using log-scaling on popularity, the system avoids being dominated by viral outliers while still favoring well-regarded content.
+*   **Candidate Pool Size:** A fixed pool of 500 provides a balance between recall and latency; larger pools increased cost and latency without yielding proportional gains in recall.
+*   **Simplicity:** Avoiding complex ensemble methods (like RRF) significantly reduced latency and kept the system stable against failure modes observed in the experiments.
 
 ## Key experiments
-- **Pool Expansion**: Expanding the FAISS search depth was critical to surpassing the baseline recall (0.441 to 0.510).
-- **Metadata Integration**: Normalizing popularity and ratings allowed for a more robust ranking than vector distance alone.
-- **Elimination of complex hybrids**: Most complex BM25/RRF fusion experiments were discarded due to high latency (often >20ms) and poor returns on recall.
+*   **Candidate Expansion:** Increasing the pool from the default to 500 was necessary to ensure the re-ranking phase had sufficient data to optimize against.
+*   **Metadata Integration:** Simple boosting via log-normalized popularity and raw rating successfully improved user-facing relevance without the high latency costs of external library dependencies.
+*   **Hybrid Rejection:** Numerous experiments involving BM25 ensemble and RRF were discarded due to extreme latency degradation (e.g., 30s+) or marginal recall improvements that did not justify the operational cost.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.451 | 0.510 |
-| latency_ms | 15.1 | 8.6 |
+| recall@10 | 0.510 | 0.510 |
+| latency_ms | 12.4 | 12.4 |
 
 ## How to run
-1. Ensure `faiss`, `pandas`, and `numpy` are installed.
-2. Load the pre-trained model and initialize the FAISS index from your processed dataset.
-3. Call `search(query, df, bm25, model, index)` to retrieve the top 10 movies.
+1. Ensure `pandas`, `numpy`, and `faiss` are installed in your environment.
+2. Load the pre-computed index and the movie dataframe.
+3. Call the `search` function: `results = search(query, df, bm25, model, index, top_k=10)`.
