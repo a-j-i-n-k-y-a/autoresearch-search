@@ -1,35 +1,33 @@
 # Architecture
 
 ## What it does
-The system performs high-performance semantic movie retrieval by combining dense vector representations with a popularity-informed re-ranking heuristic. It queries a FAISS index to identify a broad candidate pool of semantically relevant films, which are then refined using metadata-driven scoring to ensure user satisfaction.
+The system performs high-performance movie retrieval by combining semantic vector search with metadata-driven re-ranking. It balances pure relevance with user-preference signals (popularity and ratings) to deliver highly relevant results within sub-10ms latency.
 
 ## Components
-*   **Vector Engine (FAISS):** Encodes user queries into embedding space to perform approximate nearest neighbor search.
-*   **Expansion Logic:** Retrieves a larger initial candidate pool ($k=100$) to mitigate the "lost in retrieval" problem of standard vector search.
-*   **Popularity Re-ranker:** A custom scoring function that combines normalized semantic distance with a log-scaled popularity boost (`vote_average` * `log1p(vote_count)`).
-*   **Inference Pipeline:** A streamlined Python function (`search.py`) optimized for minimal overhead.
+- **FAISS Index**: Handles high-speed approximate nearest neighbor (ANN) retrieval using embeddings of movie overviews.
+- **Semantic Encoder**: A pre-trained model mapping natural language queries to vector space.
+- **Metadata Processor**: Normalizes `vote_count` (using a log-scale) and `vote_average` to ensure signal from popularity and quality is captured without drowning out semantic relevance.
+- **Scoring Engine**: Implements a weighted hybrid score: $Score = \text{Norm}(\text{L2\_dist}) + 0.15 \cdot \text{Norm}(\text{Log\_Pop}) + 0.15 \cdot \text{Norm}(\text{Rating})$.
 
 ## Why it works
-The architecture succeeds by shifting the balance from complex hybrid searching (which introduced excessive latency) to an "expand-then-refine" strategy. By increasing the candidate pool to 100, we recover more relevant documents that would otherwise be filtered out. The subsequent re-ranking using a log-scaled popularity boost effectively surfaces high-quality, widely recognized content, while removing the overhead of redundant BM25 calculations.
+By expanding the candidate pool to 500 in the initial FAISS search, the system captures a broader "long-tail" of relevant items. The subsequent re-ranking step uses light-weight metadata normalization to prioritize high-quality, popular content, which directly correlates with user satisfaction, effectively refining the vector retrieval results.
 
 ## Tradeoffs
-*   **Precision vs. Compute:** By using a larger initial candidate pool, we increase the semantic recall at the cost of processing slightly more metadata rows per request.
-*   **Simplicity:** The system intentionally avoids complex multi-modal fusion (e.g., RRF, BM25) which proved computationally expensive and detrimental to recall in this specific environment.
-*   **Popularity Bias:** The ranking heuristic favors established, highly-rated films, which may slightly reduce the visibility of niche or newer content.
+- **Candidate Pool Size**: Increasing the pool to 500 slightly increases memory usage during retrieval but significantly improves recall.
+- **Simple Re-ranking**: We explicitly avoided heavy BM25/hybrid indexing in the final version to maintain sub-10ms latency, favoring arithmetic adjustments to existing metadata over costly text-based re-scoring.
 
 ## Key experiments
-*   **Candidate Pool Expansion (The Winner):** Simply increasing the FAISS search radius to 100 significantly outperformed all hybrid BM25 combinations, proving that retrieval recall was the primary bottleneck.
-*   **Hybrid Inefficiency:** Multiple attempts to integrate BM25 scores (either via RRF or linear weighting) consistently increased latency (>20ms) while degrading recall, likely due to feature misalignment between sparse and dense vectors.
-*   **Normalization Risks:** Attempting to force L2 normalization or complex ranking math often resulted in instability or severe recall drops, reinforcing the need for the robust, simple heuristic used in the final version.
+- **Pool Expansion**: Expanding the FAISS search depth was critical to surpassing the baseline recall (0.441 to 0.510).
+- **Metadata Integration**: Normalizing popularity and ratings allowed for a more robust ranking than vector distance alone.
+- **Elimination of complex hybrids**: Most complex BM25/RRF fusion experiments were discarded due to high latency (often >20ms) and poor returns on recall.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.441 | 0.451 |
-| latency_ms | 18.8 | 8.1 |
+| recall@10 | 0.451 | 0.510 |
+| latency_ms | 15.1 | 8.6 |
 
 ## How to run
-1. Ensure the environment has `faiss-cpu`, `numpy`, and `pandas` installed.
-2. Load the pre-computed `index` and `df` (movie metadata).
-3. Import `search` from `search.py`.
-4. Invoke the function: `search(query="your search term", df=df, bm25=None, model=model, index=index)`.
+1. Ensure `faiss`, `pandas`, and `numpy` are installed.
+2. Load the pre-trained model and initialize the FAISS index from your processed dataset.
+3. Call `search(query, df, bm25, model, index)` to retrieve the top 10 movies.
