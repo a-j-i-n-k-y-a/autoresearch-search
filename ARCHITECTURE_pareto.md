@@ -1,33 +1,36 @@
 # Architecture
 
 ## What it does
-The system provides high-performance, relevance-aware movie recommendations by performing a candidate expansion via vector similarity search, followed by a lightweight popularity-biased re-ranking.
+The system performs a high-performance, metadata-aware semantic search for movies. It retrieves candidates using a FAISS vector index and re-ranks them by blending semantic distance with popularity and quality signals to improve relevance while minimizing compute overhead.
 
 ## Components
-*   **Vector Retrieval (FAISS):** Uses a pre-computed index to perform fast L2 distance-based retrieval of 50 candidates (top_k * 5).
-*   **Popularity Signal:** Extracts `vote_count` metadata, applying a `log1p` transformation to compress the distribution and prevent highly popular movies from overwhelming semantic relevance.
-*   **Scoring Function:** Calculates a hybrid score: $Score = \frac{1}{1 + \text{distance}} + (\log(1 + \text{votes}) \times 0.05)$.
-*   **Re-ranking Engine:** Sorts the expanded candidate pool based on the hybrid score and truncates to the final `top_k` results.
+*   **Vector Retrieval:** Uses a pre-trained encoder model to perform a k-NN search on 500 candidates via FAISS, optimized for low-latency retrieval.
+*   **Normalization Layer:** 
+    *   **Distance:** L2 distances are transformed into a similarity score $1.0 - (d / (1+d))$ to map values to a $[0, 1]$ range.
+    *   **Popularity:** `vote_count` is processed via `log1p` and min-max scaled to prevent outliers from dominating the score.
+    *   **Quality:** `vote_average` is normalized linearly by factor 10.
+*   **Scoring Engine:** Calculates a weighted composite score: $Score = Similarity + (0.15 \times NormalizedPopularity) + (0.15 \times NormalizedRating)$.
 
 ## Why it works
-By retrieving a pool larger than `top_k`, the system gains enough headroom to inject metadata-based signals without compromising semantic precision. The `log1p` scaling ensures the popularity bias acts as a "tie-breaker" for movies that are already semantically similar, improving user satisfaction without drifting away from the search intent.
+The architecture avoids heavy multi-pass re-ranking (like BM25 + FAISS interleaving) which caused high latency in experiments. By expanding the retrieval pool to 500 candidates and applying a lightweight metadata injection during the ranking stage, the system achieves a 15.6% recall improvement while maintaining sub-10ms latency. The log-scaling of popularity ensures that popular movies are promoted without burying niche but highly relevant semantic matches.
 
 ## Tradeoffs
-*   **Precision vs. Latency:** Increasing the retrieval pool size increases memory overhead and processing time; the current 5x factor is the empirical sweet spot.
-*   **Metadata Dependency:** Relies on the availability and quality of `vote_count`. If this data is sparse or noisy, the re-ranking logic may degrade.
+*   **Memory vs. Accuracy:** A fixed candidate pool size of 500 is used to maintain performance; very rare results outside this semantic neighborhood are sacrificed.
+*   **Complexity:** The scoring function assumes metadata distribution remains stable; significant shifts in the rating/popularity distribution might require a recalibration of the 0.15 weights.
 
 ## Key experiments
-*   **Expansion vs. Direct Search:** Moving from a strict 1:1 retrieval to a 5x candidate pool allowed for significant improvements in recall by enabling effective re-ranking.
-*   **Popularity Scaling:** Early iterations using raw `vote_count` or `vote_average` failed to account for long-tail distributions; the `log1p` transformation stabilized the scoring.
-*   **Hybrid RRF:** Attempts at complex RRF (Reciprocal Rank Fusion) between BM25 and Vectors were discarded due to high latency and negligible gains compared to the final scoring method.
+*   **Baseline (Initial):** Pure FAISS retrieval yielded high latency due to inefficient post-processing.
+*   **Candidate Pool Expansion:** Testing pool sizes showed that 500 is the "sweet spot" for balancing latency and recall.
+*   **Metadata Integration:** Early attempts to use BM25 for ranking significantly increased latency (often >20ms); the decision to use simple scalar arithmetic for popularity and rating was critical to achieving the final performance.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.412 | 0.800 |
-| latency_ms | 14.1 | 11.5 |
+| recall@10 | 0.441 | 0.510 |
+| latency_ms | 13.0 | 8.6 |
 
 ## How to run
-1. Ensure the FAISS index is loaded into memory as `index`.
-2. Provide a pre-encoded `model` capable of generating query embeddings.
-3. Pass the `df` containing metadata (`title`, `overview`, `vote_count`) to the `search(query, df, bm25, model, index)` function.
+1. Ensure `faiss`, `pandas`, and `numpy` are installed.
+2. Load the pre-computed `index` and the movie `df`.
+3. Pass the query and initialized components to `search(query, df, bm25, model, index)`.
+4. The function returns a dictionary of the top 10 movies sorted by the composite metadata-aware score.
