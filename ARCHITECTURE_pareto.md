@@ -1,33 +1,40 @@
+---
+exp_id      : exp_069
+prompt_hash : 1bffc102
+prompt_file : experiments/prompts/1bffc102.txt
+objective   : pareto
+generated   : 2026-05-14T20:04:20
+---
+
 # Architecture
 
 ## What it does
-The system implements a two-stage hybrid retrieval pipeline for movie search. It first performs rapid keyword-based pruning of the candidate space using BM25, followed by a computationally efficient semantic re-ranking using dot-product vector similarity.
+The system implements a two-stage hybrid search pipeline for movie retrieval. It performs high-speed candidate selection using keyword-based retrieval (BM25) followed by a compute-efficient semantic re-ranking step using dense vector embeddings to ensure relevance.
 
 ## Components
-- **Candidate Retrieval:** A BM25-based algorithm retrieves the top 50 most relevant documents from the index based on exact term matching.
-- **Embedding Model:** A pre-trained transformer model generates dense vector representations for the input query and the pre-filtered candidate pool.
-- **Re-ranker:** A dot-product calculation computes semantic similarity between the query embedding and the candidate pool, sorting them to produce the final top-k result.
+- **Candidate Retrieval (BM25):** An initial filtering layer that selects the top 50 candidates from the dataset based on keyword frequency and document length, providing a low-latency "narrowing" of the search space.
+- **Semantic Re-ranker (SBERT):** A transformer-based model that encodes the query and the 50 selected candidates into dense vectors. 
+- **Dot Product Scorer:** Calculates cosine similarity between the query vector and candidate vectors to determine the final relevance ranking.
 
 ## Why it works
-The architecture optimizes the search bottleneck by decoupling coarse-grained retrieval from fine-grained ranking. By limiting the embedding encoding and similarity scoring to the top 50 candidates identified by BM25, the system minimizes high-cost inference operations while maintaining high semantic recall. This "prune-then-rank" strategy provides a significant latency reduction compared to global vector search.
+By using BM25 for the initial retrieval, the system avoids running expensive transformer inference over the entire movie database. The 50-candidate pool is small enough for the embedding model to process in parallel while providing enough coverage to maintain high recall. This effectively prunes the search space to only those items most likely to be relevant.
 
 ## Tradeoffs
-- **Latency vs. Exhaustiveness:** By using a fixed candidate pool (top 50), the system trades the ability to retrieve long-tail matches that might score poorly on BM25 but well on semantic similarity.
-- **Resource Usage:** The system requires maintaining both a keyword index and a vector embedding model, increasing the complexity of the data pipeline compared to a pure BM25 or pure vector approach.
+- **Candidate Sensitivity:** The performance is highly dependent on the initial recall of the BM25 stage. If relevant movies are not caught in the top 50, the re-ranker cannot recover them.
+- **Fixed Pool Size:** Using a static pool size of 50 candidates minimizes latency but limits the model's ability to "see" a wider breadth of potentially relevant documents compared to larger pool sizes.
 
 ## Key experiments
-- **Candidate Pool Size:** Testing indicated that increasing the pool from 50 to 100 yielded negligible gains in recall, while lower counts significantly degraded performance.
-- **Retrieval Hybridization:** Numerous experiments with RRF (Reciprocal Rank Fusion) and complex weighting showed higher latency and lower recall than the simple two-stage BM25-filtering approach.
-- **Stability:** Several attempts to implement complex feature-weighted re-ranking resulted in system crashes or performance regressions, leading to the selection of the current stable, low-latency implementation.
+- **exp_069 (Winner):** Hybrid search with metadata-informed candidate pool resizing and efficient dot-product scoring.
+- **Candidate Pool Scaling:** Multiple experiments revealed that a pool size of 50–100 provided the optimal balance between recall stability and query latency.
+- **Fusion Optimization:** Experiments attempting RRF (Reciprocal Rank Fusion) and complex weighting consistently introduced higher latency with diminishing returns on recall, leading to the adoption of the simpler BM25-then-Vector approach.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.510 | 0.510 |
-| latency_ms | 14.8 | 8.6 |
+| latency_ms | 17.5 | 8.6 |
 
 ## How to run
-1. Ensure the environment has `numpy`, `pandas`, and the `rank_bm25` library installed.
-2. Load the movie DataFrame and pre-indexed BM25 object.
-3. Initialize the embedding model.
-4. Call `search(query, df, bm25, model, index, top_k=10)` to retrieve ranked results.
+1. Ensure the environment has `numpy`, `pandas`, and the relevant embedding model dependencies installed.
+2. Initialize the `bm25` index using the movie overview corpus.
+3. Call `search(query, df, bm25, model, index)` to retrieve the top-k ranked results as a list of dictionaries.
