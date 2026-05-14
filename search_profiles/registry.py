@@ -15,9 +15,9 @@ PROFILES = {
     },
     "low_latency": {
         "module": "search_profiles.low_latency",
-        "recall": 0.441176,
-        "latency_ms": 15.369649026908126,
-        "cost_usd": 0.0,
+        "recall": 0.196078,
+        "latency_ms": 6.890647551592658,
+        "cost_usd": 0.000574,
         "description": "minimize latency — fastest response",
         "objective": "latency",
         "use_when": "speed matters most — autocomplete, typeahead",

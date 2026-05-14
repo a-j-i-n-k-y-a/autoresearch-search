@@ -56,7 +56,7 @@ OBJECTIVE_TO_PROFILE = {
     "cost":    "low_cost",
 }
 
-# FIX 2 — Cross-objective seeding.
+# — Cross-objective seeding.
 # When starting pareto or latency runs, seed from the best recall profile
 # so the agent refines a strong baseline rather than starting from scratch.
 OBJECTIVE_SEED_FROM = {
@@ -601,14 +601,22 @@ No markdown fences. No explanation. Just the description comment then the code.
 # No LLM call — just writes a metrics summary so the file is never stale
 # even if the run is interrupted. The full LLM-generated doc is written
 # at the end of the loop as before.
-def update_architecture_file(objective, best_metrics, baseline_metrics, n_kept, n_total):
+def update_architecture_file(objective, best_metrics, baseline_metrics, n_kept, n_total, exp_id=None, prompt_hash=None):
     """
     Write a lightweight metrics summary on every KEEP.
     No LLM call — deterministic and fast.
     Overwrites any previous version so the file always reflects current best.
     """
     filename = f"ARCHITECTURE_{objective}.md"
-    content  = f"""# Architecture — {objective}
+    content  = f"""---
+exp_id      : {exp_id or 'unknown'}
+prompt_hash : {prompt_hash or 'unknown'}
+prompt_file : experiments/prompts/{prompt_hash or 'unknown'}.txt
+objective   : {objective}
+updated     : {time.strftime("%Y-%m-%dT%H:%M:%S")}
+---
+
+# Architecture — {objective}
 *Auto-updated on every KEEP. Full LLM-generated doc written at run end.*
 
 ## Current best
@@ -637,8 +645,28 @@ def document_architecture(best_metrics, baseline_metrics, objective, n_experimen
     discarded = [r for r in history if r["status"] == "discard"]
     crashed   = [r for r in history if r["status"] == "crash"]
 
+    # ── Resolve best experiment's exp_id and prompt_hash ──
+    best_kept        = best_from_history(history, objective)
+    best_exp_id      = "unknown"
+    best_prompt_hash = "unknown"
+    if best_kept:
+        all_records = load_experiments()
+        matched = next((
+            r for r in all_records
+            if r["description"] == best_kept["description"]
+            and r["status"] == "keep"
+        ), None)
+        if matched:
+            best_exp_id      = matched["exp_id"]
+            best_prompt_hash = matched.get("prompt_hash", "unknown")
+
     prompt = f"""
 You are documenting the final architecture of an autonomously optimised movie search system.
+
+## Winning experiment reference:
+- exp_id      : {best_exp_id}
+- prompt_hash : {best_prompt_hash}
+- Prompt file : experiments/prompts/{best_prompt_hash}.txt
 
 ## Winning search.py:
 ```python
@@ -674,10 +702,24 @@ Return only the markdown. No preamble.
     content  = response.choices[0].message.content.strip()
 
     filename = f"ARCHITECTURE_{objective}.md"
-    write_file(filename, content)
+
+    # ── Prepend reference frontmatter before LLM content ──
+    header = f"""---
+exp_id      : {best_exp_id}
+prompt_hash : {best_prompt_hash}
+prompt_file : experiments/prompts/{best_prompt_hash}.txt
+objective   : {objective}
+generated   : {time.strftime("%Y-%m-%dT%H:%M:%S")}
+---
+
+"""
+    write_file(filename, header + content)
+
     subprocess.run(["git", "add", filename])
     subprocess.run(["git", "commit", "-m", f"docs: architecture for objective={objective}"])
     print(f"   Saved → {filename}")
+
+
 
 # ─── MAIN LOOP ──────────────────────────────────────────────
 def run_experiment_loop(n_experiments=20, objective="recall"):
@@ -855,8 +897,14 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
 
             # FIX 3 — Write live architecture summary on every KEEP.
             # No LLM call — just metrics. Survives interrupted runs.
+            saved_prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:8]
             n_kept = len([r for r in history if r["status"] == "keep"])
-            update_architecture_file(objective, best_metrics, baseline_metrics, n_kept, i + 1)
+            update_architecture_file(
+                objective, best_metrics, baseline_metrics,
+                n_kept, i + 1,
+                exp_id=exp_id,
+                prompt_hash=saved_prompt_hash
+            )
 
         else:
             git_restore()
