@@ -1,21 +1,18 @@
 import numpy as np
 
 def search(query, df, bm25, model, index, top_k=10):
+    bm25_scores = bm25.get_scores(query.lower().split())
+    top_n = 50
+    candidates_idx = np.argsort(bm25_scores)[-top_n:][::-1]
+    
+    candidates = df.iloc[candidates_idx].copy()
+    
     query_vec = model.encode([query])
-    # Search 500 candidates for wider retrieval
-    distances, top_idx = index.search(query_vec.astype("float32"), 500)
+    candidate_vecs = model.encode(candidates['text'].tolist())
     
-    candidates = df.iloc[top_idx[0]].copy()
-    # Normalize L2 distance to [0, 1]
-    sim = 1.0 - (distances[0] / (1.0 + distances[0]))
+    similarities = np.dot(candidate_vecs, query_vec.T).flatten()
     
-    # Metadata normalization: log-scale popularity and normalize rating
-    pop = np.log1p(candidates['vote_count'])
-    pop = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)
-    rating = candidates['vote_average'] / 10.0
-    
-    # Combined score
-    candidates['score'] = sim + (0.15 * pop) + (0.15 * rating)
-    
+    candidates['score'] = similarities
     ranked = candidates.sort_values(by="score", ascending=False)
+    
     return ranked.head(top_k)[["title", "overview"]].to_dict("records")

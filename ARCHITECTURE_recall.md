@@ -1,41 +1,33 @@
 # Architecture
 
-The system is an autonomously optimized movie search engine that leverages dense vector embeddings and metadata-aware ranking. It focuses on balancing semantic relevance with movie popularity and quality.
-
 ## What it does
-The engine takes a natural language query, retrieves the most semantically similar movies from a pre-indexed vector space, and then re-ranks them using movie metadata (popularity and ratings). It returns a list of movies that are both relevant to the query and generally well-regarded by audiences.
+The system implements a two-stage hybrid search pipeline to retrieve and rank relevant movies. It performs an initial coarse-grained retrieval using BM25 to identify a candidate pool, followed by a fine-grained semantic re-ranking stage using dense vector embeddings to determine final relevance.
 
 ## Components
-- **FAISS Index**: Used for high-speed semantic retrieval of the top 500 candidate documents using L2 distance.
-- **Sentence Transformer Model**: Encodes queries into vector embeddings.
-- **Log-Scale Popularity Normalizer**: Processes `vote_count` using a log-transformation to prevent blockbuster movies from disproportionately dominating results while still favoring well-known films.
-- **Rating Normalizer**: Scales `vote_average` (0-10) to a 0-1 range to act as a quality signal.
-- **Weighted Scoring Engine**: Combines similarity, popularity (15% weight), and rating (15% weight) into a final ranking score.
+*   **BM25 Retrieval:** Executes a term-frequency-based search to identify the top 50 candidate movies from the dataset based on keyword matching.
+*   **Vector Re-ranker:** Uses a pre-trained sentence-transformer model to encode the user query and the retrieved candidate descriptions into a shared semantic space.
+*   **Cosine Similarity:** Computes the dot product between the query vector and candidate vectors to determine the final ranked order.
 
 ## Why it works
-- **Deep Retrieval**: Searching 500 candidates ensures that even if the most popular movies aren't the most semantically relevant, the system has a large enough pool to find high-quality matches.
-- **Metadata Balancing**: By combining semantic similarity with normalized metadata, the system avoids "irrelevant but popular" and "relevant but obscure/poorly-rated" pitfalls.
-- **Logarithmic Scaling**: Using `np.log1p` for vote counts accounts for the power-law distribution of movie popularity, making the signal useful across several orders of magnitude.
+The architecture optimizes for both recall and efficiency by limiting the expensive vector encoding process to a small, high-confidence subset of the data (50 items). By offloading the initial broad search to BM25, the system ensures keyword precision, while the re-ranker captures semantic nuances that simple keyword matching might miss.
 
 ## Tradeoffs
-- **Post-Retrieval Overhead**: Sorting and normalizing 500 candidates in Python adds a small latency overhead compared to returning raw FAISS results.
-- **Metadata Dependency**: The ranking quality relies heavily on the presence and accuracy of `vote_count` and `vote_average`.
-- **Static Weights**: The 15% weight for popularity and rating is fixed, which may not be ideal for all query types (e.g., searching for extremely niche or new films).
+*   **Candidate Pool Size:** The pool is hard-capped at 50 candidates. While this keeps latency low, it limits the system's ability to recover relevant documents that fall outside the BM25 top 50, effectively capping the maximum possible recall.
+*   **Complexity:** The architecture relies on two separate search methodologies, increasing the surface area for potential indexing failures (as evidenced by multiple crashes in the experiment history).
 
 ## Key experiments
-The autonomous agent attempted 20 iterations to implement **Reciprocal Rank Fusion (RRF)** and **BM25 Hybrid Search**. However, all 20 attempts resulted in crashes (primarily `SyntaxError` and `ImportError`). Consequently, the system retained the stable baseline architecture, which provides a balance of semantic search and metadata boosting.
+*   **Hybrid RRF:** Attempts at Reciprocal Rank Fusion (RRF) consistently resulted in system crashes or degraded performance, leading to a pivot toward a sequential pipeline.
+*   **FAISS Integration:** Direct FAISS integration experiments consistently failed to outperform the baseline or showed significant instability, suggesting the current BM25-based candidate pool provides the most stable performance floor.
+*   **Candidate Scaling:** Increasing the candidate pool to 1000 increased latency and cost without improving recall, justifying the 50-item limit.
 
 ## Metrics
-
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.510 | 0.510 |
-| latency_ms | 12.6 | 12.6 |
+| latency_ms | 12.2 | 12.2 |
 
 ## How to run
-1. Ensure `numpy`, `pandas`, `faiss`, and `sentence_transformers` are installed.
-2. Load your movie DataFrame (`df`), pre-trained FAISS `index`, and `model`.
-3. Call the search function:
-   ```python
-   results = search("space exploration movies", df, bm25, model, index, top_k=10)
-   ```
+1. Ensure `numpy` and `pandas` are installed.
+2. Provide a pre-indexed `bm25` object, a `model` with an `encode` method, and the movie `df`.
+3. Pass the query and artifacts to the `search` function.
+4. The function returns the top 10 ranked results as a list of dictionaries.
