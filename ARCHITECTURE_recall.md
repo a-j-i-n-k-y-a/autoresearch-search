@@ -1,33 +1,44 @@
+---
+exp_id      : exp_069
+prompt_hash : 1bffc102
+prompt_file : experiments/prompts/1bffc102.txt
+objective   : recall
+generated   : 2026-05-14T20:09:17
+---
+
 # Architecture
 
 ## What it does
-The system implements a two-stage hybrid search pipeline to retrieve and rank relevant movies. It performs an initial coarse-grained retrieval using BM25 to identify a candidate pool, followed by a fine-grained semantic re-ranking stage using dense vector embeddings to determine final relevance.
+The system performs high-performance semantic movie retrieval by mapping natural language user queries to a vector embedding space. It leverages a pre-computed FAISS index to identify the most contextually relevant titles based on a learned embedding model, delivering results with low latency.
 
 ## Components
-*   **BM25 Retrieval:** Executes a term-frequency-based search to identify the top 50 candidate movies from the dataset based on keyword matching.
-*   **Vector Re-ranker:** Uses a pre-trained sentence-transformer model to encode the user query and the retrieved candidate descriptions into a shared semantic space.
-*   **Cosine Similarity:** Computes the dot product between the query vector and candidate vectors to determine the final ranked order.
+- **Encoder Model:** A sentence transformer that generates a `float32` vector representation of the user's input query.
+- **FAISS Index:** A high-speed similarity search structure that performs a K-Nearest Neighbors (KNN) lookup against movie vectors.
+- **Data Store:** A Pandas DataFrame containing pre-processed movie metadata, mapped to indices in the FAISS structure.
+- **Search Engine:** A `search.py` interface that performs encoding, index lookup, and record retrieval in a single pass.
 
 ## Why it works
-The architecture optimizes for both recall and efficiency by limiting the expensive vector encoding process to a small, high-confidence subset of the data (50 items). By offloading the initial broad search to BM25, the system ensures keyword precision, while the re-ranker captures semantic nuances that simple keyword matching might miss.
+The system relies on pure dense retrieval. By focusing on an optimized vector search (eliminating hybrid reranking or multi-stage pipelines), it minimizes compute overhead. The "winning" configuration balances the precision of semantic embeddings with the extreme efficiency of the FAISS engine, achieving high recall without the latency penalties observed in complex hybrid approaches.
 
 ## Tradeoffs
-*   **Candidate Pool Size:** The pool is hard-capped at 50 candidates. While this keeps latency low, it limits the system's ability to recover relevant documents that fall outside the BM25 top 50, effectively capping the maximum possible recall.
-*   **Complexity:** The architecture relies on two separate search methodologies, increasing the surface area for potential indexing failures (as evidenced by multiple crashes in the experiment history).
+- **Latency vs. Complexity:** By discarding hybrid methods (BM25 fusion/reranking), the system achieves sub-10ms latency but loses the exact-keyword matching benefits that traditional text search engines provide.
+- **Data Dependencies:** The system is heavily dependent on the quality of the initial embedding model; if the model fails to represent niche queries, there is no "fallback" text-based mechanism.
 
 ## Key experiments
-*   **Hybrid RRF:** Attempts at Reciprocal Rank Fusion (RRF) consistently resulted in system crashes or degraded performance, leading to a pivot toward a sequential pipeline.
-*   **FAISS Integration:** Direct FAISS integration experiments consistently failed to outperform the baseline or showed significant instability, suggesting the current BM25-based candidate pool provides the most stable performance floor.
-*   **Candidate Scaling:** Increasing the candidate pool to 1000 increased latency and cost without improving recall, justifying the 50-item limit.
+- **`exp_069` (Winning):** Implemented a streamlined metadata rescale that maintained optimal recall while optimizing for search speed and computational cost.
+- **`baseline`:** Established the initial recall benchmark and high-latency threshold.
+- **`pool_expansion` variants:** Multiple experiments demonstrated that expanding the candidate pool beyond an optimal threshold (around 100) increased latency and cost without improving recall.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.510 | 0.510 |
-| latency_ms | 12.2 | 12.2 |
+| latency_ms | 10.8 | 8.6 |
 
 ## How to run
-1. Ensure `numpy` and `pandas` are installed.
-2. Provide a pre-indexed `bm25` object, a `model` with an `encode` method, and the movie `df`.
-3. Pass the query and artifacts to the `search` function.
-4. The function returns the top 10 ranked results as a list of dictionaries.
+1. Ensure `faiss` and `numpy` are installed.
+2. Initialize the `model` (SentenceTransformer) and load the pre-computed `index` and `df` (DataFrame).
+3. Call the `search` function:
+```python
+results = search(query="Sci-fi space travel", df=df, bm25=None, model=model, index=index, top_k=10)
+```
