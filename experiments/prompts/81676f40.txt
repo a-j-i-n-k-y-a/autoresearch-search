@@ -1,0 +1,255 @@
+
+You are an autonomous research agent improving a movie search system.
+
+## Your instructions (program.md):
+# Search Autoresearch
+
+Autonomous agent improving a movie search system across three objectives.
+
+## Setup
+
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. Initialize `results.tsv` with just the header row.
+5. Confirm and begin.
+
+## The objective
+
+Three constraints tracked separately — never combined:
+- **recall@10** — primary. Higher is better. Max 1.0.
+- **latency_ms** — lower is better. Under 30ms is ideal.
+- **llm_cost_usd** — cost of the API call that generated this code.
+
+The active objective is passed at runtime via --objective flag.
+Improving on the active objective = keep. Otherwise = discard.
+
+## Available resources in search()
+
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
+```
+
+- `df` — DataFrame: columns title, overview, genres, vote_average, vote_count, text
+- `bm25` — BM25Okapi: `bm25.get_scores(query.lower().split())`
+- `model` — SentenceTransformer("all-MiniLM-L6-v2"): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## Environment constraints — violations crash the run
+
+- Allowed imports ONLY: `numpy`, `rank_bm25`, `sentence_transformers`, `faiss`, `sklearn`
+- `nltk` is NOT installed
+- Use `int()` or `np.int64()`, never `np.int` (deprecated)
+- Do NOT import from other project files
+
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (genres, vote_count, vote_average, release_date)
+- Am I searching the right field? (title vs overview vs genres vs full text)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF)
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting
+- Cosine similarity
+- Pure BM25 only
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Output format
+
+The benchmark prints:
+    recall@10    : 0.700000
+    latency      : 27.5ms
+    llm_cost     : $0.001489
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+    commit  recall  latency_ms  llm_cost_usd  status  description
+
+Status is `keep`, `discard`, or `crash`. Use 0.0 for all metrics on crash.
+Three constraints are tracked separately — never combined into one score.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation. Keep experimenting until manually stopped.
+
+## Current search.py:
+```python
+import numpy as np
+
+def search(query, df, bm25, model, index, top_k=10):
+    query_vec = model.encode([query])
+    # Search 500 candidates for wider retrieval
+    distances, top_idx = index.search(query_vec.astype("float32"), 500)
+    
+    candidates = df.iloc[top_idx[0]].copy()
+    # Normalize L2 distance to [0, 1]
+    sim = 1.0 - (distances[0] / (1.0 + distances[0]))
+    
+    # Metadata normalization: log-scale popularity and normalize rating
+    pop = np.log1p(candidates['vote_count'])
+    pop = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)
+    rating = candidates['vote_average'] / 10.0
+    
+    # Combined score
+    candidates['score'] = sim + (0.15 * pop) + (0.15 * rating)
+    
+    ranked = candidates.sort_values(by="score", ascending=False)
+    return ranked.head(top_k)[["title", "overview"]].to_dict("records")
+```
+
+## Experiment history (last 10):
+- Hybrid vector and genre-boosted ranking.: recall=0.480  latency=8.4ms  cost=$0.000408  (discard)
+- # Expand candidate pool to 2500: recall=0.196  latency=8.7ms  cost=$0.000364  (discard)
+- Vector search with BM25 boost: recall=0.245  latency=20.7ms  cost=$0.000440  (discard)
+- # Semantic re-rank via cosine similarity: recall=0.000  latency=0.0ms  cost=$0.000439  (crash)
+  ERROR:
+Traceback (most recent call last):
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/agent_loop.py", line 808, in run_experiment_loop
+    new_recall, new_latency = run_eval()
+                              ~~~~~~~~^^
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/agent_loop.py", line 141, in run_eval
+    recall  = evaluate(search_module.search, df, bm25, model, index)
+  File "/Users/ajinkyamawal/Downloads/autoresearch_v2/prepare.py", line 301, in evaluate
+    results = search_fn(query,
+- # Use BM25 scores to re-rank vector results: recall=0.235  latency=20.0ms  cost=$0.000466  (discard)
+- # Pure BM25 with Title Boost: recall=0.196  latency=13.1ms  cost=$0.000380  (discard)
+- # Boost vector search by genre similarity: recall=0.196  latency=8.5ms  cost=$0.000423  (discard)
+- # Vector search with simple sorting: recall=0.196  latency=8.7ms  cost=$0.000365  (discard)
+- # Pure vector search, no metadata.: recall=0.196  latency=8.7ms  cost=$0.000366  (discard)
+- # Pure BM25, higher pool, no boost: recall=0.196  latency=10.0ms  cost=$0.000389  (discard)
+
+## Active objective: recall
+Maximize recall@10. Latency and cost are secondary.
+
+## Three constraints tracked separately (never combined into one score):
+- recall@10      — fraction of expected movies found in top 10 results
+- latency_ms     — wall clock milliseconds per query
+- llm_cost_usd   — cost of this API call to generate the spec
+
+## ALREADY TRIED across all runs — do not repeat these:
+  - Hybrid BM25 and vector search
+  - Re-rank by title overlap bonus.
+  - Weighted ensemble of BM25 and vector.
+  - Increase candidate pool to 1000.
+  - Pure vector search top 1000.
+  - Simple vector search without metadata.
+  - Use BM25 for initial retrieval.
+  - Use genre boost on vector.
+  - Candidate re-ranking with BM25 score.
+  - Expand candidate pool and refine.
+  - Rank by BM25 on titles only.
+  - Hybrid RRF with vector and BM25
+  - Reciprocal Rank Fusion with BM25
+  - # Rank by weighted genre boost
+  - # Scaled vector scores with decay
+  - # Semantic boost via title concatenation
+  - Boost vector by title match
+  - Pure vector search with top-K
+  - Hybrid RRF with pure vector
+  - Boost by title exact match.
+  - # Larger pool, no normalization
+  - Boost vector with BM25 recall
+  - Log-normalized popularity and rating boost
+  - Use BM25 score on full text as primary.
+  - # Hybrid RRF on larger 500 pool
+  - Hybrid retrieval with BM25 log normalization.
+  - # Use BM25 primary with vector boost
+  - # Candidate pool reranked by genre.
+  - Pure vector search with smaller pool
+  - Rerank top 100 via genre matching
+  - # Pure vector search, k=10
+  - Weighting results by popularity log
+  - # Vector search with BM25 rerank
+  - Large candidate pool, no metadata.
+  - # Simple vector search boost
+  - # Hybrid RRF on titles
+  - # Hybrid retrieval with RRF and ranking
+  - BM25 scores on overview text.
+  - # Hybrid RRF on 1000 pool
+  - Search entire dataframe with BM25.
+  - Rerank 500 candidates via BM25
+  - Weighted genre and vote score.
+  - # Title keyword boost in BM25
+  - # Boost vector with BM25 score
+  - # Vector search with BM25 ensemble
+  - # Re-rank via genre-weighted vector similarity
+  - # Pure vector search, no metadata.
+  - # Vector similarity with score scaling
+  - Hybrid reranking with BM25 recall boost
+  - Pure vector search optimization.
+  - # Expand pool, raw vector ranking
+  - # BM25 title and overview ensemble
+  - # Pure BM25, query boosting.
+  - # Combine BM25 scores with Vector distances
+  - # Filter candidate pool by BM25
+  - # Rerank 100 via BM25 scores.
+  - # Vector similarity with inverse decay
+  - # Large pool, re-rank by BM25
+  - # Pure vector search, no metadata.
+  - # Query augmentation with title boost
+  - # Boost candidates by release date
+  - # Vector search with BM25 rerank
+  - # Vector search with genre-weighted rank
+  - # Re-rank candidates by BM25 similarity.
+  - # Retrieve 500, rerank by BM25.
+  - # Pure BM25 with Title Boost
+  - # Pure BM25 with tuned weights
+  - # Direct FAISS vector retrieval
+  - # Hybrid RRF on 1000 pool
+  - Pure vector search with top-K
+  - # Multi-stage retrieval with genre filtering
+  - # Maximize pool and score by rating
+  - # Larger pool, ranking by similarity
+  - # Retrieve 2000, rerank by BM25.
+  - # Rerank 500 via weighted genre+vote
+  - # Hybrid RRF on titles
+  - # Rerank with BM25 on text field
+  - Hybrid vector and genre-boosted ranking.
+  - # Expand candidate pool to 2500
+  - Vector search with BM25 boost
+  - # Semantic re-rank via cosine similarity
+  - # Use BM25 scores to re-rank vector results
+  - # Pure BM25 with Title Boost
+  - # Boost vector search by genre similarity
+  - # Vector search with simple sorting
+  - # Pure vector search, no metadata.
+  - # Pure BM25, higher pool, no boost
+If your idea is similar to any of the above, pick something structurally different.
+
+## ALREADY IN THE CODE — do not re-add these:
+  - Import: numpy
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated)
+- Do NOT import from other project files
+
+# DESCRIPTION: <5 words or less describing the change>
+Return the description line above FIRST, then immediately the raw Python code.
+No markdown fences. No explanation. Just the description comment then the code.

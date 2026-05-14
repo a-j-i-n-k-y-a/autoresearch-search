@@ -1,0 +1,291 @@
+
+You are an autonomous research agent improving a movie search system.
+
+## Your instructions (program.md):
+# Search Autoresearch
+
+Autonomous agent improving a movie search system across three objectives.
+
+## Setup
+
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. Initialize `results.tsv` with just the header row.
+5. Confirm and begin.
+
+## The objective
+
+Three constraints tracked separately — never combined:
+- **recall@10** — primary. Higher is better. Max 1.0.
+- **latency_ms** — lower is better. Under 30ms is ideal.
+- **llm_cost_usd** — cost of the API call that generated this code.
+
+The active objective is passed at runtime via --objective flag.
+Improving on the active objective = keep. Otherwise = discard.
+
+## Available resources in search()
+
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
+```
+
+- `df` — DataFrame: columns title, overview, genres, vote_average, vote_count, text
+- `bm25` — BM25Okapi: `bm25.get_scores(query.lower().split())`
+- `model` — SentenceTransformer("all-MiniLM-L6-v2"): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## Environment constraints — violations crash the run
+
+- Allowed imports ONLY: `numpy`, `rank_bm25`, `sentence_transformers`, `faiss`, `sklearn`
+- `nltk` is NOT installed
+- Use `int()` or `np.int64()`, never `np.int` (deprecated)
+- Do NOT import from other project files
+
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (genres, vote_count, vote_average, release_date)
+- Am I searching the right field? (title vs overview vs genres vs full text)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF)
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting
+- Cosine similarity
+- Pure BM25 only
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Output format
+
+The benchmark prints:
+    recall@10    : 0.700000
+    latency      : 27.5ms
+    llm_cost     : $0.001489
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+    commit  recall  latency_ms  llm_cost_usd  status  description
+
+Status is `keep`, `discard`, or `crash`. Use 0.0 for all metrics on crash.
+Three constraints are tracked separately — never combined into one score.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation. Keep experimenting until manually stopped.
+
+## Current search.py:
+```python
+import numpy as np
+
+def search(query, df, bm25, model, index, top_k=10):
+    query_vec = model.encode([query])
+    # Search 500 candidates for wider retrieval
+    distances, top_idx = index.search(query_vec.astype("float32"), 500)
+    
+    candidates = df.iloc[top_idx[0]].copy()
+    # Normalize L2 distance to [0, 1]
+    sim = 1.0 - (distances[0] / (1.0 + distances[0]))
+    
+    # Metadata normalization: log-scale popularity and normalize rating
+    pop = np.log1p(candidates['vote_count'])
+    pop = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)
+    rating = candidates['vote_average'] / 10.0
+    
+    # Combined score
+    candidates['score'] = sim + (0.15 * pop) + (0.15 * rating)
+    
+    ranked = candidates.sort_values(by="score", ascending=False)
+    return ranked.head(top_k)[["title", "overview"]].to_dict("records")
+```
+
+## Experiment history (last 10):
+- # FAISS dot product with L2 normalize: recall=0.196  latency=7.8ms  cost=$0.000404  (discard)
+- # BM25 retrieve 1000, sort by FAISS: recall=0.245  latency=20.5ms  cost=$0.000461  (discard)
+- # Hybrid FAISS with vote_count log-boost: recall=0.461  latency=7.5ms  cost=$0.000452  (discard)
+- # Hybrid search with score z-score fusion: recall=0.245  latency=21.3ms  cost=$0.000499  (discard)
+- # Pure FAISS with large pool: recall=0.196  latency=8.7ms  cost=$0.000398  (discard)
+- # Boosted BM25 with FAISS reranking: recall=0.255  latency=20.6ms  cost=$0.000466  (discard)
+- # BM25 title weight and FAISS: recall=0.245  latency=22.8ms  cost=$0.000495  (discard)
+- Two-pass re-rank with embedding refinement: recall=0.216  latency=65.2ms  cost=$0.000508  (discard)
+- # Exact match title boosting: recall=0.196  latency=9.8ms  cost=$0.000443  (discard)
+- # Rerank with text-overlap scoring: recall=0.196  latency=8.7ms  cost=$0.000462  (discard)
+
+## Active objective: recall
+Maximize recall@10. Latency and cost are secondary.
+
+## Three constraints tracked separately (never combined into one score):
+- recall@10      — fraction of expected movies found in top 10 results
+- latency_ms     — wall clock milliseconds per query
+- llm_cost_usd   — cost of this API call to generate the spec
+
+## ALREADY TRIED across all runs — do not repeat these:
+  - RRF fusion of BM25 and FAISS.
+  - BM25 title boost weighted ranking
+  - BM25 scores combined with FAISS
+  - Hybrid search using normalized BM25
+  - Re-rank candidate pool using genres
+  - Increase candidate pool size.
+  - Increase candidate pool to 100.
+  - Pool expansion with genre boost
+  - Re-rank using weighted BM25 scores.
+  - Hybrid BM25 and FAISS search.
+  - Candidate pool expansion with BM25-based rank filtering.
+  - Larger pool, weighted hybrid scoring.
+  - Larger pool, minimal re-ranking.
+  - Expand pool, use pure cosine.
+  - Combine vector search and BM25.
+  - Title boost via query duplication.
+  - Candidate expansion with popularity reweighting.
+  - Hybrid FAISS with genre filtering.
+  - Hybrid search with BM25 reranking.
+  - Use pure FAISS with L2 normalization.
+  - BM25 score-boosted vector search
+  - BM25 only on full text
+  - BM25 on title, vector overview.
+  - Weighted genre bias on FAISS
+  - Filter by vote count threshold.
+  - Hybrid BM25 and Vector Search
+  - # Boosted Reciprocal Rank Fusion
+  - Simple RRF using BM25 and FAISS
+  - Weighted BM25 and Vector Fusion
+  - Pure FAISS on title field.
+  - RRF with normalized BM25 scores
+  - BM25 and FAISS simple intersection.
+  - Use BM25 for initial retrieval.
+  - Pure FAISS with max pool.
+  - Weighted hybrid search with normalization
+  - Title-weighted BM25 plus vector search
+  - Boosted hybrid with genre intersection
+  - BM25 top 500 re-rank
+  - Simple vector search with normalization.
+  - Pure FAISS with larger pool.
+  - BM25 retrieval ranked by BM25.
+  - Hybrid search via BM25 scores.
+  - Expand pool, re-rank with BM25.
+  - BM25 over concatenated metadata
+  - BM25 on title, FAISS overview.
+  - # Pure BM25 on title/overview
+  - Hybrid BM25 and vector search.
+  - # Normalize scores and RRF
+  - Hybrid BM25 and vector union
+  - # BM25 title plus vector cosine
+  - # FAISS normalization and genre filtering
+  - # Pure FAISS L2 search
+  - # BM25 title score multiplication
+  - Expand candidate pool to 200.
+  - BM25 title match re-rank
+  - # Hybrid search with BM25 reranking
+  - # BM25 title plus vector score
+  - Weighted hybrid with raw scores.
+  - BM25 title match filter
+  - # Simple BM25 ranking on overview
+  - Hybrid search with BM25 score scaling.
+  - Genre-weighted hybrid vector search.
+  - Pure FAISS with larger pool.
+  - Rerank FAISS using title matching
+  - Pure FAISS with title-boosted vectors.
+  - BM25 and FAISS score integration
+  - # Hybrid search with metadata rescale
+  - # Multi-stage ranking with genre bias
+  - # BM25 title and FAISS overview
+  - # FAISS candidate pool boosting
+  - # Pure BM25 over full text
+  - # Boost FAISS by query expansion
+  - # Two-stage rerank using BM25
+  - # Rank by embedding cosine similarity
+  - # Soft-weighted BM25/FAISS rank hybrid
+  - # Pure FAISS search L2
+  - # Rerank with genre match
+  - # BM25 title word match boost
+  - # BM25 title word match boost
+  - # Hybrid BM25 score fusion
+  - # Exponential vector score boosting
+  - # Pure BM25 over concatenated text
+  - # BM25 retrieve, rerank with FAISS
+  - BM25 title match re-scoring
+  - # BM25 retrieve 1000, rerank FAISS
+  - # Pure FAISS with cosine similarity
+  - # Pure BM25 retrieval on full text
+  - Hybrid search with BM25 score scaling.
+  - # Pure FAISS with large candidate pool
+  - Simple RRF on title/overview
+  - Weighted popularity, rating, and BM25.
+  - # Multi-vector query expansion search
+  - # FAISS distance with genre boost
+  - # Semantic search with genre-weighting
+  - # BM25 retrieve, hybrid score rerank
+  - # BM25 title word match boost
+  - Weighted cosine and BM25 rank product
+  - # Two-pass FAISS with cosine similarity
+  - # Weighted BM25 and FAISS re-ranking
+  - # FAISS index with inner product
+  - Pure FAISS with 1000 candidate pool.
+  - # RRF of BM25 and FAISS
+  - # BM25 title score multiplicative boost
+  - # FAISS-BM25 ensemble with log normalization
+  - # FAISS semantic search with genre binary boost
+  - # Pure FAISS with distance rescaling
+  - Pure BM25 with title weight.
+  - # Pure BM25 over title/overview
+  - # Vector search with genre filtering
+  - Vector search with release date boost.
+  - # Hybrid rerank with popularity prior
+  - # BM25 title word match boost
+  - # BM25 + FAISS via dot product
+  - # Re-rank candidates using cosine similarity
+  - # BM25 retrieve 1000, rerank FAISS
+  - Weighted genre match on BM25
+  - # Linear scale BM25 and FAISS
+  - # Embed title/overview separately, rerank with FAISS
+  - # BM25 retrieve, re-rank with rating
+  - # Re-rank via BM25 scores on top 1000 candidates
+  - # Rank by BM25, filter by FAISS.
+  - # Vector search with genre-weighted boost
+  - # FAISS dot product with L2 normalize
+  - # BM25 retrieve 1000, sort by FAISS
+  - # Hybrid FAISS with vote_count log-boost
+  - # Hybrid search with score z-score fusion
+  - # Pure FAISS with large pool
+  - # Boosted BM25 with FAISS reranking
+  - # BM25 title weight and FAISS
+  - Two-pass re-rank with embedding refinement
+  - # Exact match title boosting
+  - # Rerank with text-overlap scoring
+If your idea is similar to any of the above, pick something structurally different.
+
+## ALREADY IN THE CODE — do not re-add these:
+  - Import: numpy
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated)
+- Do NOT import from other project files
+
+# DESCRIPTION: <5 words or less describing the change>
+Return the description line above FIRST, then immediately the raw Python code.
+No markdown fences. No explanation. Just the description comment then the code.

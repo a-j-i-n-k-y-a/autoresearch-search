@@ -34,13 +34,18 @@ def search(query, df, bm25, model, index, top_k=10):
 - `model` — SentenceTransformer("all-MiniLM-L6-v2"): `model.encode([query])`
 - `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
 
-## Environment constraints — violations crash the run
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
 
-- Allowed imports ONLY: `numpy`, `rank_bm25`, `sentence_transformers`, `faiss`, `sklearn`
-- `nltk` is NOT installed
-- Use `int()` or `np.int64()`, never `np.int` (deprecated)
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated)
 - Do NOT import from other project files
-
+- `bm25` is already a BM25Okapi object — do NOT rebuild it, call bm25.get_scores(query.split())
+- `model` is already a SentenceTransformer — do NOT reload it, call model.encode([query])
+- `index` is already a FAISS index — do NOT rebuild it, call index.search(vec, k)
+- `df` has columns: title, overview, genres, vote_count, vote_average
+- Function signature must be exactly: def search(query, df, bm25, model, index, top_k=10)
+- Return format must be: df[...].to_dict("records") with at least title column
 
 ## Experiment ideas
 
@@ -60,6 +65,14 @@ Known strategies to explore first:
 - Vote score boosting
 - Cosine similarity
 - Pure BM25 only
+
+## PROMISING DIRECTIONS — not yet fully explored:
+- Correct RRF formula: 1/(60+rank_a) + 1/(60+rank_b) — current code has k=0 bug
+- Pseudo-relevance feedback: embed top-5 results, use as additional query vectors
+- Separate embeddings for title vs overview, combine scores
+- Query expansion: generate 2-3 rephrasings of the query, union their FAISS results
+- Additive vote boost (normalized): score += vote_score / max_votes * 0.2
+
 
 ## Simplicity criterion
 
@@ -85,3 +98,4 @@ Three constraints are tracked separately — never combined into one score.
 ## NEVER STOP
 
 Once the loop begins, do not ask the human for confirmation. Keep experimenting until manually stopped.
+

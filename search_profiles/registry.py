@@ -6,8 +6,8 @@
 PROFILES = {
     "high_recall": {
         "module": "search_profiles.high_recall",
-        "recall": 0.441176,
-        "latency_ms": 14.615409514483284,
+        "recall": 0.509804,
+        "latency_ms": 10.181721519021426,
         "cost_usd": 0.0,
         "description": "maximize recall — best for full search pages",
         "objective": "recall",
@@ -24,8 +24,8 @@ PROFILES = {
     },
     "balanced": {
         "module": "search_profiles.balanced",
-        "recall": 0.441176,
-        "latency_ms": 11.77368912042356,
+        "recall": 0.509804,
+        "latency_ms": 13.680154202031154,
         "cost_usd": 0.0,
         "description": "best recall/latency tradeoff",
         "objective": "pareto",

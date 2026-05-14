@@ -13,7 +13,7 @@ import os
 import pickle
 
 # ─── FIXED CONSTANTS ───────────────────────────────────────
-DATASET_SIZE    = 100000      # number of movies to use
+DATASET_SIZE    = 722796     # number of movies to use
 TOP_K           = 10          # recall measured at top 10
 CACHE_DIR       = "data/"
 EXPERIMENT_TIME = 60          # max seconds per experiment
