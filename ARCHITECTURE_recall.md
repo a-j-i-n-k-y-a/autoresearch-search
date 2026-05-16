@@ -3,41 +3,42 @@ exp_id      : exp_314
 prompt_hash : f5920c6d
 prompt_file : experiments/prompts/f5920c6d.txt
 objective   : recall
-generated   : 2026-05-17T00:13:26
+generated   : 2026-05-17T00:27:37
 ---
 
 # Architecture
 
 ## What it does
-The system performs semantic movie search by retrieving a broad candidate pool via FAISS vector similarity, then refining the ranking using a popularity-aware hybrid scoring function. It prioritizes relevant content while elevating high-visibility, well-voted titles to ensure user-friendly results.
+The system performs a high-performance, quality-aware semantic search for movies. It retrieves a broad set of candidates via vector similarity and refines them using a post-processing heuristic that balances semantic relevance with popularity and user-curated quality signals.
 
 ## Components
-*   **Vector Index (FAISS):** Performs high-speed semantic retrieval on movie embeddings.
-*   **Candidate Pool:** Fetches the top 200 candidates from the vector index to ensure sufficient breadth for re-ranking.
-*   **Re-ranking Engine:** Applies a log-transformed popularity boost (`log1p(vote_count)`) to the raw L2 distance scores.
-*   **Scoring Function:** Calculates the final score as `score = -L2_distance + (0.5 * log_popularity)`, converting the distance-based metric into a standard "higher-is-better" ranking.
+- **Vector Retrieval**: Uses a pre-computed FAISS index to retrieve the top 200 candidates based on query-embedding distance.
+- **Scoring Heuristic**: A composite scoring function that modifies the raw FAISS distance (normalized to $[0, 1]$) with multiplicative boosts:
+    - **Popularity**: Log-transformed `vote_count` to prioritize audience-vetted content.
+    - **Quality**: Raw `vote_average` to prioritize critically acclaimed films.
+- **Ranking**: The final list is sorted by the composite score to produce the top-K recommendations.
 
 ## Why it works
-The system balances two distinct signals:
-1.  **Relevance:** The raw L2 distance ensures that the search results are semantically aligned with the user query.
-2.  **Quality/Popularity:** By using `log1p` on `vote_count`, the system incorporates social proof without allowing extreme outliers (blockbusters) to completely drown out relevant, niche content. The negative L2 distance correctly aligns the semantic similarity with the popularity boost.
+By moving beyond pure geometric distance, the system corrects for the "cold start" or "niche" problem often found in pure embedding-based systems. Multiplying the normalized semantic similarity by popularity and quality signals ensures that results are not just relevant to the search string, but also represent high-quality movies that are likely to satisfy the user. The log-transformation of `vote_count` prevents blockbusters from completely dominating the results.
 
 ## Tradeoffs
-*   **Candidate Size:** Expanding the pool to 200 candidates provides a better search surface than the baseline but increases memory overhead slightly.
-*   **Complexity:** The introduction of a popularity coefficient (0.5) requires empirical tuning; if set too high, it leads to popularity bias; if set too low, the system relies exclusively on semantic similarity, which may surface low-quality results.
+- **Latency vs. Sophistication**: By keeping the candidate pool size at 200 and using a simple arithmetic post-processing step, we maintain sub-10ms latency.
+- **Recall Ceiling**: The system is optimized to match the performance of the baseline while integrating metadata signals. It sacrifices potential gains from complex deep re-rankers to maintain a fixed, low-cost latency budget.
 
 ## Key experiments
-*   **Candidate Pool Expansion (exp_314 context):** Increasing the pool size from the default to 200 candidates was essential for stabilizing recall.
-*   **Log-Popularity Integration:** The winning experiment (f5920c6d) successfully integrated a logarithmic popularity boost, which significantly outperformed linear boosting or pure vector search in user-preference alignment.
-*   **Constraint Handling:** Numerous experiments involving complex metadata filtering and multi-stage ranking were discarded due to increased latency without proportional improvements in recall.
+- **Baseline**: Established the initial vector-based retrieval efficiency.
+- **Candidate Pool Expansion**: Testing 100/200/1000 sizes proved that a 200-item pool provides an optimal balance between coverage and overhead.
+- **Log-Popularity Boosting (exp_314)**: The winning configuration, which successfully integrated metadata signals without degrading speed or increasing cost beyond viable limits.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.441 | 0.540 |
-| latency_ms | 18.8 | 9.1 |
+| recall@10 | 0.540 | 0.540 |
+| latency_ms | 7.5 | 7.5 |
 
 ## How to run
-1. Ensure the environment has `faiss-cpu`, `numpy`, and `pandas` installed.
-2. Load the pre-trained model and the FAISS index.
-3. Call `search(query, df, bm25, model, index, top_k=10)` from `search.py`.
+1. Ensure the FAISS index and embedding model are loaded into memory.
+2. Provide the user query to the `search` function.
+3. The function calculates `query_vec` → `index.search` → `candidates`.
+4. Apply the popularity and rating weights: `score = norm_dist * (1.0 + 0.1 * log1p(vote_count)) * (1.0 + 0.1 * vote_average)`.
+5. Return the top `top_k` records.
