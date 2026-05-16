@@ -3,39 +3,40 @@ exp_id      : unknown
 prompt_hash : unknown
 prompt_file : experiments/prompts/unknown.txt
 objective   : latency
-generated   : 2026-05-17T00:29:16
+generated   : 2026-05-17T04:08:49
 ---
 
 # Architecture
 
 ## What it does
-The system performs a high-performance, two-stage movie recommendation retrieval. It identifies the most relevant candidates using semantic vector search and re-ranks them based on a hybrid utility function that optimizes for both audience popularity and critical reception.
+The system provides a hybrid search experience for movie discovery, combining classical keyword-based retrieval with modern semantic understanding and popularity-based ranking to deliver high-quality, relevant results.
 
 ## Components
-- **Vector Retrieval:** Employs FAISS to perform approximate nearest neighbor search over pre-computed movie embeddings.
-- **Candidate Pool:** Retrieves a broad set of 200 candidates to ensure high recall before applying precision-focused re-ranking.
-- **Utility Re-ranker:** A custom scoring function that combines normalized L2 distance with log-transformed popularity (vote count) and average ratings to surface "high-quality, high-visibility" content.
+- **BM25 Retrieval:** Used as the primary stage to retrieve the top 1000 candidate movies based on text-token matching.
+- **FAISS Semantic Engine:** Executes vector similarity search using L2 distance on the full index to derive semantic scores for the candidate pool.
+- **Popularity-Aware Scorer:** Applies a mathematical transformation (`log1p(vote_count) * vote_average`) to boost candidates that have higher community engagement and ratings.
+- **Hybrid Fusion:** Integrates BM25 candidate recall with a final rank determined by the product of semantic similarity and popularity scores.
 
 ## Why it works
-The system balances semantic relevance with metadata-driven quality indicators. By using a log-transformed popularity boost (`np.log1p`), the model prevents extremely popular items from overwhelming the search results while still favoring well-regarded titles. Normalizing the L2 distance ensures that the vector similarity remains the primary anchor for relevance, while the secondary scores act as precise bias levers.
+The two-stage retrieval strategy ensures high recall by capturing both exact keyword matches and conceptual synonyms. By isolating the computation of semantic scores to a refined BM25-selected pool and integrating popularity metrics as a final re-ranking signal, the system balances user preference (quality/ratings) with search precision.
 
 ## Tradeoffs
-- **Candidate Pool Size:** Selecting 200 candidates provides a balance between recall and latency. Increasing this number would improve recall but degrade sub-10ms response times.
-- **Feature Sparsity:** The system ignores temporal features (e.g., release date) to maintain a low-latency profile, prioritizing robust quality metrics instead.
-- **Embedding dependency:** The system relies entirely on the quality of the base embeddings; if the embedding model is weak, metadata re-ranking cannot fully compensate for poor initial retrieval.
+- **Complexity vs. Latency:** Utilizing both BM25 and FAISS increases computational overhead compared to single-method approaches; however, it effectively mitigates the "missing keyword" problem of vector search and the "semantic blind spots" of BM25.
+- **Resource Intensity:** Maintaining both an inverted index (BM25) and a vector index (FAISS) requires more memory than a singular architecture.
 
 ## Key experiments
-- **Candidate Pool Expansion:** Incremental testing showed that increasing the candidate pool to 200 was necessary to achieve parity with the target recall.
-- **Normalization Strategy:** Early experiments with raw score fusion led to bias towards specific metrics; the winning configuration uses L2 normalization and log-scaling for metadata to ensure consistent score distributions.
-- **Re-ranking logic:** Multiple experiments attempted genre-based filtering, but found that popularity and average rating provided a more consistent improvement in user-perceived relevance.
+- **Initial Baseline:** Established a 0.441 recall threshold.
+- **Candidate Pool Expansion:** Testing various pool sizes (100 to 2000) revealed that 1000 candidates provide the optimal balance for re-ranking precision.
+- **Hybrid Fusion (Winning Model):** Integrating logarithmic popularity boosting with semantic distance yielded the most significant jump in recall (0.580) while maintaining acceptable latency.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.540 | 0.540 |
-| latency_ms | 6.5 | 6.5 |
+| recall@10 | 0.580 | 0.580 |
+| latency_ms | 21.2 | 21.2 |
 
 ## How to run
-1. Ensure `faiss`, `numpy`, and `pandas` are installed.
-2. Initialize the FAISS index with the target movie dataset embeddings.
-3. Call `search(query, df, bm25, model, index, top_k=10)` passing the pre-loaded index and dataframe.
+1. Ensure `search.py` and the initialized `faiss_index` are in the environment path.
+2. Load the dataset into a pandas DataFrame.
+3. Pass a string query to the `search(query, df, bm25, model, index, top_k=10)` function.
+4. The system will compute candidate scores based on the hybrid pipeline and return the ranked dictionary of movies.
