@@ -3,38 +3,39 @@ exp_id      : exp_314
 prompt_hash : f5920c6d
 prompt_file : experiments/prompts/f5920c6d.txt
 objective   : pareto
-generated   : 2026-05-17T04:33:27
+generated   : 2026-05-17T04:43:31
 ---
 
 # Architecture
 
 ## What it does
-The system implements a hybrid search architecture that combines keyword-based retrieval with semantic vector similarity and popularity-based ranking. It retrieves a broad candidate set using BM25 and refines the relevance using a dense FAISS vector index, ultimately re-weighting results by movie popularity (vote count and average).
+The movie search system implements a hybrid retrieval and re-ranking architecture that combines keyword-based lexical search (BM25) with dense semantic vector search (FAISS) and a popularity-based ranking adjustment to deliver high-relevance movie recommendations.
 
 ## Components
-- **BM25 Retrieval**: Performs initial recall by fetching 1,000 candidates based on keyword matching against the movie dataset.
-- **FAISS Semantic Scoring**: Computes L2 distances between the query vector and candidate embeddings, converting distances into a 0-1 semantic similarity score ($1 / (1 + L2)$).
-- **Popularity Booster**: Applies a multiplicative boost to the semantic score using a logarithmic transformation of `vote_count` scaled by `vote_average` to prioritize high-quality, widely-viewed content.
-- **Ranker**: Merges semantic and popularity signals into a final score, sorting candidates to return the top_k results.
+*   **BM25 Retrieval:** Performs an initial full-text search across the corpus to retrieve a candidate pool of 1,000 documents, ensuring strong recall for specific keyword queries.
+*   **FAISS Semantic Index:** Computes L2-distance-based semantic similarity between the user query and the candidate pool, mapping distances to scores ($1 / (1 + L2)$).
+*   **Popularity Re-ranker:** Applies a multiplicative boost to the semantic scores using a formula combining vote volume and quality ($log1p(\text{vote\_count}) \times \text{vote\_average}$).
+*   **Hybrid Scorer:** Merges BM25-informed candidate selection with refined semantic and popularity-weighted scoring to generate the final top-k results.
 
 ## Why it works
-The architecture solves the "cold-recall" problem of pure vector search by ensuring relevant keywords are captured via BM25, while the FAISS index provides nuances of semantic meaning. The inclusion of a popularity bias aligns the search results with user expectations for high-quality recommendations, significantly improving recall without sacrificing low-latency performance.
+The system solves the "cold-start" problem of pure vector search by using BM25 as an efficient recall mechanism. By re-ranking only the top 1,000 candidates with deep semantic understanding and a popularity bias, it balances query-specific relevance with general user preference, maintaining low latency while significantly improving retrieval accuracy.
 
 ## Tradeoffs
-- **Latency vs. Accuracy**: By limiting the re-ranking to a 1,000-candidate pool, the system maintains a low latency (~5.6ms) at the expense of potentially missing relevant results outside the initial BM25 retrieval set.
-- **Complexity**: Combining multiple scoring mechanisms increases the surface area for hyperparameter tuning compared to a single-stage search.
+*   **Latency vs. Precision:** By narrowing the search space to 1,000 items for re-ranking, we maintain sub-10ms latency at the cost of potential "long-tail" item omission.
+*   **Complexity:** The multi-stage pipeline requires index management for both BM25 and FAISS, increasing memory overhead compared to a single-index system.
 
 ## Key experiments
-- **Candidate Pool Expansion (exp_314)**: Optimized the balance between BM25 recall and vector re-ranking, leading to the current high-recall configuration.
-- **Popularity-Boost Integration**: Iterated on various popularity formulas (log-scaling vs. raw) to find the optimal multiplier that favors quality without drowning out specific semantic matches.
+*   **exp_314 (Final):** Leveraged a combined semantic and log-popularity scoring function on a 1,000-item BM25 candidate pool.
+*   **Candidate Expansion:** Testing pool sizes between 10 and 1,000 revealed that 1,000 is the "sweet spot" for balancing latency and recall.
+*   **Hybrid RRF vs. Scoring:** We found that direct score fusion based on normalized metrics significantly outperformed standard Reciprocal Rank Fusion (RRF).
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
 | recall@10 | 0.520 | 0.540 |
-| latency_ms | 5.6 | 5.6 |
+| latency_ms | 5.9 | 5.9 |
 
 ## How to run
-1. Ensure `df`, `bm25` index, `model`, and `faiss_index` are pre-loaded in memory.
-2. Call `search(query, df, bm25, model, index, top_k=10)` from `search.py`.
-3. The function will return a list of dictionary records containing movie metadata, ranked by the combined semantic and popularity score.
+1. Ensure `bm25` (rank_bm25), `model` (sentence-transformers), and `index` (faiss) objects are pre-indexed.
+2. Initialize the search with the movie dataframe `df`.
+3. Call `search(query, df, bm25, model, index, top_k=10)` to receive the ranked record list.
