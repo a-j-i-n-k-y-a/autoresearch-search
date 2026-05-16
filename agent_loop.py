@@ -99,8 +99,7 @@ def is_improvement(new, best, objective):
     - Then optimize the target metric
     - Never collapse metrics into one score
     """
-
-    # ── Global constraints ─────────────────────────────
+     # ── Global constraints ─────────────────────────────
     RECALL_FLOOR = 0.50
 
     # Prevent catastrophic regressions
@@ -109,6 +108,14 @@ def is_improvement(new, best, objective):
     # Pareto tolerance thresholds
     MAX_LATENCY_INCREASE = 1.10
     MAX_COST_INCREASE    = 2.00
+    MIN_LATENCY_IMPROVEMENT = 0.05
+
+    checks = {
+        "recall_floor":    new["recall"] >= RECALL_FLOOR,
+        "recall_drop":     new["recall"] >= best["recall"] * MAX_RECALL_DROP_RATIO,
+        "latency_improve": (best["latency_ms"] - new["latency_ms"]) > MIN_LATENCY_IMPROVEMENT,
+    }
+
 
     # ── Helper: quality gate ──────────────────────────
     def recall_ok():
@@ -127,15 +134,8 @@ def is_improvement(new, best, objective):
 
     # ── Latency objective ─────────────────────────────
     elif objective == "latency":
-    
-
-        # Speed improvements are meaningless if search quality collapses
         if not recall_ok():
             return False
-
-        MIN_LATENCY_IMPROVEMENT = 0.05  # ms
-
-
         return ( best["latency_ms"] - new["latency_ms"] ) > MIN_LATENCY_IMPROVEMENT
 
     # ── Cost objective ────────────────────────────────
@@ -152,22 +152,22 @@ def is_improvement(new, best, objective):
 
         MAX_PARETO_RECALL_DROP = 0.02
 
-        # Allow tiny recall tradeoffs for major latency gains
+        # 1. Recall can drop, but only a tiny bit (max 0.02)
         if new["recall"] < best["recall"] - MAX_PARETO_RECALL_DROP:
             return False
 
-        # Latency bounded degradation
+        # 2. Latency can increase, but max 10%
         if new["latency_ms"] > best["latency_ms"] * MAX_LATENCY_INCREASE:
             return False
 
-        # Cost bounded degradation
+        # 3. Cost can increase, but max 2x
         if (
             best["llm_cost_usd"] != float("inf") and
             new["llm_cost_usd"] > best["llm_cost_usd"] * MAX_COST_INCREASE
         ):
             return False
 
-        # Must materially improve something
+        # 4. Must actually improve at least one thing
         return (
             new["recall"] > best["recall"] or
             new["latency_ms"] < best["latency_ms"] - 0.5 or
@@ -188,13 +188,13 @@ def is_baseline(description):
     
 def best_from_history(history, objective):
     """Find the best kept experiment from history for the given objective."""
+    RECALL_FLOOR = 0.5
     kept = [
         r for r in history
-        if (
-            r["status"] == "keep"
-            and r.get("objective") == objective
-            and not is_baseline(r["description"])
-        )
+        if r["status"] == "keep"
+        and r.get("objective") == objective
+        and not is_baseline(r["description"])
+        and r["metrics"]["recall"] >= RECALL_FLOOR  # hard gate here too
     ]
     if not kept:
         return None
@@ -218,6 +218,8 @@ def best_from_history(history, objective):
             return None
         return min(feasible, key=lambda r: r["metrics"]["llm_cost_usd"])
 
+    # we can also extract rue pareto history - midway recall, miway latency. currently doing
+    # with recall max first in the history and reducing latency lateron
     elif objective == "pareto":
         return max(kept, key=lambda r: r["metrics"]["recall"])
     return None
@@ -237,7 +239,7 @@ def run_eval():
     - repeated trials
     - median latency
     """
-
+    # we load once and cached the resources globally
     global CACHED_RESOURCES
 
     if CACHED_RESOURCES is None:
@@ -246,18 +248,21 @@ def run_eval():
 
     df, bm25, model, index = CACHED_RESOURCES
 
+    # python caches the imports, so we need to delete the old one, and import the new one
     if "search" in sys.modules:
         del sys.modules["search"]
 
     import search as search_module
 
-    # ── Warmup ─────────────────────────────
+    # ── Warmup : run the 50 benchmarks but throw the result away, coz it contains noise, coz its the first run
     evaluate(search_module.search, df, bm25, model, index)
 
     # ── Recall (single deterministic run) ─
     recall = evaluate(search_module.search, df, bm25, model, index)
 
-    # ── Latency trials ────────────────────
+    # ── Latency trials : calculates per query latency (we divide by the len(benchmark_queries)),
+    # and we don't take mean of the 5 trials we take median, coz if pc hiccups once it will skew the mean,
+    # not the median
     trials = []
 
     N_TRIALS = 5
@@ -391,16 +396,23 @@ def update_profile(objective, metrics, description):
     Copies current search.py to search_profiles/<profile_name>.py
     and regenerates search_profiles/registry.py.
     """
+    RECALL_FLOOR = 0.5
+    # figure out which profile to save to
     profile_name = OBJECTIVE_TO_PROFILE.get(objective)
     if not profile_name:
         return
 
+    
     os.makedirs("search_profiles", exist_ok=True)
 
     # Create __init__.py if missing
     init_path = "search_profiles/__init__.py"
     if not os.path.exists(init_path):
         write_file(init_path, "")
+
+    if metrics["recall"] < RECALL_FLOOR:
+        print(f"⚠️ Skipping profile update — recall {metrics['recall']:.3f} below floor")
+        return
 
     # Copy winning search.py to profile
     profile_path = f"search_profiles/{profile_name}.py"
@@ -418,7 +430,7 @@ def update_profile(objective, metrics, description):
                 f"— skipping export"
             )
             return
-
+    # Save the file
     shutil.copy("search.py", profile_path)
     print(f"   📦 Profile updated → {profile_path}")
 
@@ -962,43 +974,27 @@ def document_architecture(best_metrics, baseline_metrics, objective, n_experimen
             best_exp_id      = matched["exp_id"]
             best_prompt_hash = matched.get("prompt_hash", "unknown")
 
-    prompt = f"""
-You are documenting the final architecture of an autonomously optimised movie search system.
+    kept = [r for r in history if r["status"] == "keep" 
+                and not is_baseline(r["description"])]
+    
+    if not kept:
+        # honest null result
+        prompt = f"""---
+            objective  : {objective}
+            generated  : {time.strftime("%Y-%m-%dT%H:%M:%S")}
+            result     : NO IMPROVEMENT FOUND
+            ---
 
-## Winning experiment reference:
-- exp_id      : {best_exp_id}
-- prompt_hash : {best_prompt_hash}
-- Prompt file : experiments/prompts/{best_prompt_hash}.txt
+            # No improvements kept for objective: {objective}
 
-## Winning search.py:
-```python
-{search_py}
-```
+            {len(history)} experiments ran. None cleared all constraints.
+            Baseline recall: {baseline_metrics['recall']:.3f}
+            Baseline latency: {baseline_metrics['latency_ms']:.1f}ms
 
-## Experiment summary:
-- Baseline  → recall={baseline_metrics['recall']:.3f}  latency={baseline_metrics['latency_ms']:.1f}ms
-- Final     → recall={best_metrics['recall']:.3f}  latency={best_metrics['latency_ms']:.1f}ms  cost=${best_metrics['llm_cost_usd']:.6f}
-- Objective : {objective}
-- Total experiments : {n_experiments}  |  Kept: {len(kept)}  |  Discarded: {len(discarded)}  |  Crashed: {len(crashed)}
-
-## Full experiment history:
-{chr(10).join([format_history_entry(r) for r in history])}
-
-Write a concise ARCHITECTURE.md with sections:
-# Architecture
-## What it does
-## Components
-## Why it works
-## Tradeoffs
-## Key experiments
-## Metrics
-| Metric | Baseline | Final |
-|--------|----------|-------|
-| recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
-| latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
-## How to run
-Return only the markdown. No preamble.
-"""
+            See experiments/log.jsonl for full attempt history.
+            """
+        write_file(f"ARCHITECTURE_{objective}.md", prompt)
+        return
 
     response = call_api([{"role": "user", "content": prompt}])
     content  = response.choices[0].message.content.strip()
