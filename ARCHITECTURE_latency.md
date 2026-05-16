@@ -3,42 +3,39 @@ exp_id      : unknown
 prompt_hash : unknown
 prompt_file : experiments/prompts/unknown.txt
 objective   : latency
-generated   : 2026-05-16T23:07:14
+generated   : 2026-05-16T23:29:07
 ---
 
 # Architecture
 
 ## What it does
-The system is an autonomously optimized movie search engine that retrieves relevant titles by combining semantic vector embeddings with heuristic popularity and quality signals. It maps user queries into a latent space to find candidate movies, then re-ranks these candidates to favor high-rated and well-known content.
+The system performs a high-performance, quality-aware movie recommendation search. It retrieves candidate movies via semantic vector similarity and then re-ranks them by combining relevance (L2 distance) with popularity (vote count) and quality (average rating) metrics to optimize for user engagement.
 
 ## Components
-*   **Vector Search (FAISS):** Performs K-Nearest Neighbor retrieval using a pre-computed index to map query embeddings to the top 200 candidate movies.
-*   **Ranking Logic:** Applies a post-retrieval re-ranking function that incorporates:
-    *   **Vector Proximity:** Normalized L2 distance to ensure semantic relevance.
-    *   **Popularity Signal:** Log-scaled `vote_count` to account for crowd consensus.
-    *   **Quality Signal:** Raw `vote_average` to prioritize critically acclaimed titles.
-*   **Data Pipeline:** Uses a Pandas-based candidate pool management system for lightweight filtering and feature extraction.
+- **Vector Retrieval**: Uses a FAISS index to perform an initial k-nearest neighbor search on the query embedding.
+- **Candidate Pool**: A retrieved pool of 200 candidates is processed to ensure semantic coverage while keeping compute overhead low.
+- **Re-ranker**: A post-processing step that calculates a custom score: $Score = \frac{1}{1 + dist} \times (1 + 0.1 \times \log(\text{vote\_count})) \times (1 + 0.1 \times \text{vote\_average})$.
+- **Data Processor**: A pandas-based dataframe pipeline that handles normalization of popularity and rating features.
 
 ## Why it works
-By retrieving a broader candidate pool (200 movies) and re-ranking them using a multi-factor scalar score, the system balances raw semantic similarity with user-centric signals (popularity and rating). The combination of log-transformation on popularity prevents outliers from dominating the rankings while maintaining relevance.
+By moving from a pure semantic search (which often favors obscure, high-cosine-similarity matches) to a hybrid ranking approach, the system balances relevance with "community validation." The use of `np.log1p` for vote counts prevents hyper-popular movies from drowning out niche content, while the quality boost ensures that within the semantically relevant pool, top-rated movies surface first.
 
 ## Tradeoffs
-*   **Latency vs. Recall:** Extensive testing revealed that increasing the candidate pool beyond 200 provided diminishing returns on recall while linearly increasing compute costs and latency.
-*   **Complexity:** The system favors a simple re-ranking heuristic over complex ensemble methods, which proved to be unstable or computationally prohibitive in testing.
+- **Complexity vs. Latency**: Including popularity and rating metadata requires an additional re-ranking step post-retrieval, which could scale poorly if the initial candidate pool is significantly increased.
+- **Dependency**: The system relies on the existence of quality/popularity metadata; if this data is missing for new releases, the scoring defaults to the raw vector distance.
 
 ## Key experiments
-*   **Initial Baseline:** Established a recall of 0.441 with 18.8ms latency.
-*   **Candidate Expansion:** Expanding the FAISS retrieval pool to 200 proved the most effective way to hit the recall ceiling without exceeding latency budgets.
-*   **Score Fusion:** The final integration of `log(vote_count)` and `vote_average` as multipliers for the normalized FAISS distance yielded the optimal balance between ranking accuracy and inference speed.
+- **Candidate Expansion (Exp #8)**: Determined that a pool of 200 significantly improved performance over smaller sets without inducing substantial latency.
+- **Logarithmic Popularity Boost**: Identified that `log1p(vote_count)` provides the most stable improvement to recall by filtering out "noise" while keeping high-quality content visible.
+- **Distance Normalization**: Normalized L2 distances to the range [0, 1] to ensure that ranking math remains consistent regardless of index density.
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.540 | 0.540 |
-| latency_ms | 10.8 | 10.8 |
+| recall@10 | 0.441 | 0.540 |
+| latency_ms | 18.8 | 10.9 |
 
 ## How to run
-1. Ensure `faiss` and `numpy` are installed.
-2. Initialize the index using the model encoder.
-3. Call `search(query, df, bm25, model, index)` with a user query string.
-4. The function returns the top_k ranked movie records as a dictionary.
+1. Ensure the `faiss` index and `movie_df` are loaded.
+2. Initialize the `model` (e.g., SentenceTransformer).
+3. Call `search(query, df, bm25, model, index, top_k=10)` to receive the ranked dictionary of records.
