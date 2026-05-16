@@ -436,3 +436,29 @@ exp_434	discarded	0.340000	20.5	0.000944	discard	Hybrid retrieval using BM25 on 
 exp_435	discarded	0.240000	20.8	0.000979	discard	Use BM25 for initial broad recall of 1000, then re-rank top 1000 by FAISS semantic similarity to leverage both keyword match and semantic meaning.
 exp_436	discarded	0.520000	6.2	0.000947	discard	Retrieve 1000 candidates via FAISS, then perform a final ranking based on the product of semantic score (1/(1+L2)) and a normalized popularity score derived from vote_count and vote_average.
 exp_437	discarded	0.270000	20.8	0.000963	discard	hybrid search using BM25 on the title field combined with FAISS via RRF
+exp_438	None	0.550000	6.0	0.000924	keep	pure FAISS retrieval with a larger, robust 500-candidate pool and aggressive popularity/rating re-ranking
+exp_439	discarded	0.220000	8.5	0.000897	discard	Pure FAISS retrieval with a larger candidate pool of 1500 to maximize recall and minimal re-ranking overhead.
+exp_440	discarded	0.220000	13.7	0.000938	discard	Pure BM25 retrieval on full text with genre-weighted ranking
+exp_441	discarded	0.270000	20.5	0.000970	discard	Query-independent hybrid retrieval: BM25 on text + FAISS semantic search with score-based RRF to balance keyword precision and semantic recall.
+exp_442	discarded	0.300000	19.5	0.000955	discard	Hybrid FAISS semantic search with BM25 title word matching and logarithmic popularity boost.
+exp_443	discarded	0.220000	21.2	0.000975	discard	Use BM25 for initial 1000-candidate retrieval, then re-rank with FAISS semantic scores to prioritize keyword-relevant semantic matches.
+exp_444	discarded	0.470000	6.2	0.000935	discard	Retrieve 1000 candidates via FAISS, then perform re-ranking using an exponential popularity weight (vote_average^2 * log1p(vote_count)) to prioritize high-quality, popular content.
+exp_445	discarded	0.220000	6.2	0.000904	discard	Pure FAISS retrieval with a large 1000-candidate pool and normalized L2 distance ranking.
+exp_446	discarded	0.300000	20.1	0.000997	discard	hybrid BM25 and FAISS with score-based late fusion
+exp_447	discarded	0.540000	7.5	0.000978	discard	retrieve 2000 candidates via FAISS, then perform a two-stage re-ranking: first by genre match, then by a combined score of semantic distance and popularity.
+exp_448	discarded	0.220000	7.3	0.000931	discard	Pure FAISS retrieval with a significantly larger 5000-candidate pool and direct L2 distance scoring to maximize recall by avoiding premature filtering.
+exp_449	discarded	0.400000	22.0	0.001042	discard	Use BM25 for broad recall retrieval on full text, then re-rank the top 500 candidates using FAISS semantic scores and a vote-based popularity boost.
+exp_450	discarded	0.440000	22.1	0.001025	discard	Retrieve 1000 candidates via BM25 on the concatenated text (title + overview), then re-rank using semantic similarity and popularity normalization.
+exp_451	discarded	0.220000	6.1	0.000944	discard	Pure FAISS retrieval with expanded candidate pool and adaptive L2-based semantic ranking
+exp_452	discarded	0.320000	20.6	0.001025	discard	retrieve 2000 candidates via FAISS, then perform re-ranking using an exponential weight of normalized BM25 score (on title) and semantic similarity.
+exp_453	discarded	0.520000	6.9	0.000975	discard	pure FAISS retrieval with large candidate pool and rank-based popularity boost
+exp_454	discarded	0.320000	21.2	0.001027	discard	Retrieve 1000 candidates via BM25, then perform a two-stage re-ranking: first by semantic similarity using FAISS, then by applying a popularity-based weight to the semantic score.
+exp_455	discarded	0.270000	18.9	0.000992	discard	Hybrid BM25 on titles and FAISS on overview, with reciprocal rank fusion for balanced retrieval.
+exp_456	discarded	0.360000	21.3	0.001045	discard	Expand candidate pool, apply RRF to combine BM25 and FAISS scores, use popularity for tie-breaking
+exp_457	discarded	0.220000	7.8	0.000950	discard	Pure FAISS retrieval with an aggressive 1000-candidate pool and inverse L2 semantic scoring to maximize recall by avoiding premature filtering.
+exp_458	discarded	0.410000	20.4	0.001051	discard	Hybrid retrieval using BM25 on text for recall and FAISS semantic similarity for precision, with popularity-weighted re-ranking.
+exp_459	discarded	0.270000	20.7	0.001026	discard	Use BM25 on the title field for high-precision recall, combine with FAISS vector similarity on the overview field via RRF (k=60), and return the highest ranked.
+exp_460	discarded	0.170000	6.9	0.001002	discard	Retrieve 1000 candidates via FAISS, then perform re-ranking using an inverse L2 distance score, with a boost for movies where the query terms appear in the title.
+exp_461	discarded	0.250000	21.4	0.001040	discard	Use BM25 for broad recall retrieval on full text, then re-rank the top 500 candidates using FAISS semantic scores and a popularity-based boost.
+exp_462	discarded	0.220000	9.6	0.000965	discard	pure FAISS retrieval with a significantly larger candidate pool of 2000 and simple inverse distance scoring for maximum recall
+exp_463	discarded	0.440000	24.9	0.001091	discard	Perform BM25 retrieval on full text to get a large pool, then re-rank with FAISS semantic score and popularity-based weighted scoring.

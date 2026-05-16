@@ -6244,3 +6244,393 @@
   "description": "hybrid search using BM25 on the title field combined with FAISS via RRF"
 }
 
+{
+  "exp_id": "exp_438",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:38:35",
+  "prompt_hash": "56f43cf0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve a wider pool to ensure high recall\n    dists, idxs = index.search(query_vec, 500)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Semantic score: 1 / (1 + L2)\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # Popularity metric: log1p(vote_count) * (vote_average / 10)\n    # Using log1p helps dampen the effect of extreme vote counts\n    popularity_score = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Combined score with a small popularity boost factor\n    candidates['score'] = semantic_score * (1.0 + 0.15 * popularity_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.55,
+    "latency_ms": 5.991932507604361,
+    "llm_cost_usd": 0.000924
+  },
+  "status": "keep",
+  "description": "pure FAISS retrieval with a larger, robust 500-candidate pool and aggressive popularity/rating re-ranking"
+}
+
+{
+  "exp_id": "exp_439",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:38:40",
+  "prompt_hash": "d20b3ca4",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Increase candidate pool size to 1500 to significantly improve recall\n    # while keeping the search phase as a simple flat index lookup\n    dists, idxs = index.search(query_vec, 1500)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use inverse distance as the score for simple, fast semantic ranking\n    # The L2 distance is naturally lower for closer matches\n    candidates['score'] = -dists[0]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 8.494327506050467,
+    "llm_cost_usd": 0.000897
+  },
+  "status": "discard",
+  "description": "Pure FAISS retrieval with a larger candidate pool of 1500 to maximize recall and minimal re-ranking overhead."
+}
+
+{
+  "exp_id": "exp_440",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:38:47",
+  "prompt_hash": "f49d0aac",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Use top 200 candidates from BM25 to keep latency low\n    top_indices = np.argsort(bm25_scores)[-200:][::-1]\n    candidates = df.iloc[top_indices].copy()\n    \n    # Calculate genre match boost\n    query_lower = query.lower()\n    genre_boost = candidates['genres'].apply(\n        lambda x: sum(1 for genre in str(x).lower().split(\", \") if genre in query_lower)\n    )\n    \n    # Final score: BM25 score * popularity * genre match\n    # popularity: linear normalization of vote_average\n    popularity = (candidates['vote_average'] / 10.0)\n    \n    candidates['score'] = bm25_scores[top_indices] * (1.0 + 0.2 * genre_boost) * (0.8 + 0.2 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 13.691686661913991,
+    "llm_cost_usd": 0.000938
+  },
+  "status": "discard",
+  "description": "Pure BM25 retrieval on full text with genre-weighted ranking"
+}
+
+{
+  "exp_id": "exp_441",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:38:56",
+  "prompt_hash": "028b8f3d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve 500 candidates via BM25\n    bm25_scores = bm25.get_scores(query_tokens)\n    bm25_indices = np.argsort(bm25_scores)[-500:][::-1]\n    \n    # Retrieve 500 candidates via FAISS\n    faiss_dists, faiss_indices = index.search(query_vec, 500)\n    faiss_indices = faiss_indices[0]\n    \n    # Combine via RRF (1/k+rank)\n    combined_ranks = {}\n    \n    for rank, idx in enumerate(bm25_indices):\n        combined_ranks[idx] = combined_ranks.get(idx, 0) + 1.0 / (60 + rank)\n        \n    for rank, idx in enumerate(faiss_indices):\n        combined_ranks[idx] = combined_ranks.get(idx, 0) + 1.0 / (60 + rank)\n        \n    # Get top candidates\n    sorted_indices = sorted(combined_ranks.keys(), key=lambda x: combined_ranks[x], reverse=True)\n    top_candidates = df.iloc[sorted_indices[:top_k]].copy()\n    \n    return top_candidates.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 20.483573339879513,
+    "llm_cost_usd": 0.00097
+  },
+  "status": "discard",
+  "description": "Query-independent hybrid retrieval: BM25 on text + FAISS semantic search with score-based RRF to balance keyword precision and semantic recall."
+}
+
+{
+  "exp_id": "exp_442",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:40:03",
+  "prompt_hash": "c55387aa",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve wider pool for hybrid processing\n    dists, idxs = index.search(query_vec, 200)\n    idxs = idxs[0]\n    \n    candidates = df.iloc[idxs].copy()\n    \n    # 1. Semantic Score (1 / (1 + L2))\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # 2. BM25 Title Boost (Word match)\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    bm25_subset = bm25_scores[idxs]\n    \n    # 3. Popularity Boost\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Combine: Normalize and weight components\n    # Boost by popularity, then apply title keyword relevance\n    candidates['score'] = semantic_score * (1.0 + 0.1 * popularity) + (0.2 * bm25_subset)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.3,
+    "latency_ms": 19.498155815526843,
+    "llm_cost_usd": 0.000955
+  },
+  "status": "discard",
+  "description": "Hybrid FAISS semantic search with BM25 title word matching and logarithmic popularity boost."
+}
+
+{
+  "exp_id": "exp_443",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:40:13",
+  "prompt_hash": "56b24364",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # 1. Retrieve 1000 candidates via BM25 for high keyword recall\n    bm25_scores = bm25.get_scores(query_tokens)\n    candidate_idxs = np.argsort(bm25_scores)[-1000:]\n    \n    candidates = df.iloc[candidate_idxs].copy()\n    \n    # 2. Semantic refinement using FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, _ = index.search(query_vec, len(df))\n    \n    # Extract semantic scores for the candidate subset\n    semantic_scores = 1.0 / (1.0 + dists[0][candidate_idxs])\n    \n    # 3. Combine BM25 scores (normalized) and Semantic scores\n    bm25_subset_scores = bm25_scores[candidate_idxs]\n    bm25_norm = (bm25_subset_scores - bm25_subset_scores.min()) / (bm25_subset_scores.max() - bm25_subset_scores.min() + 1e-9)\n    \n    # Weighted fusion\n    candidates['score'] = 0.4 * bm25_norm + 0.6 * semantic_scores\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 21.1776224989444,
+    "llm_cost_usd": 0.000975
+  },
+  "status": "discard",
+  "description": "Use BM25 for initial 1000-candidate retrieval, then re-rank with FAISS semantic scores to prioritize keyword-relevant semantic matches."
+}
+
+{
+  "exp_id": "exp_444",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:41:04",
+  "prompt_hash": "6aee5c02",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve 1000 candidates to maximize recall potential\n    dists, idxs = index.search(query_vec, 1000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Semantic score: normalize L2 distance\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # Quality score: prioritize high ratings exponentially and dampen vote count\n    # This favors movies with both strong critical consensus and meaningful viewership\n    quality_score = (candidates['vote_average'] ** 2) * np.log1p(candidates['vote_count'])\n    \n    # Combined score\n    candidates['score'] = semantic_score * quality_score\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.47,
+    "latency_ms": 6.238535000011325,
+    "llm_cost_usd": 0.000935
+  },
+  "status": "discard",
+  "description": "Retrieve 1000 candidates via FAISS, then perform re-ranking using an exponential popularity weight (vote_average^2 * log1p(vote_count)) to prioritize high-quality, popular content."
+}
+
+{
+  "exp_id": "exp_445",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:41:08",
+  "prompt_hash": "1b3728cc",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve a larger pool to maximize potential for high recall\n    dists, idxs = index.search(query_vec, 1000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use normalized distance as the score: lower L2 distance is better\n    # Adding a tiny epsilon to ensure non-zero values\n    candidates['score'] = -dists[0]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 6.182716656476259,
+    "llm_cost_usd": 0.000904
+  },
+  "status": "discard",
+  "description": "Pure FAISS retrieval with a large 1000-candidate pool and normalized L2 distance ranking."
+}
+
+{
+  "exp_id": "exp_446",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:43:32",
+  "prompt_hash": "7cdc3c37",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # BM25 retrieval\n    tokenized_query = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    # FAISS retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Normalize BM25\n    bm25_max = np.max(bm25_scores) if np.max(bm25_scores) > 0 else 1.0\n    bm25_norm = bm25_scores / bm25_max\n    \n    # Normalize FAISS (1 / (1 + L2))\n    semantic_scores = 1.0 / (1.0 + dists[0])\n    faiss_scores = np.zeros(len(df))\n    faiss_scores[idxs[0]] = semantic_scores\n    \n    # Combine scores (70% semantic, 30% keyword)\n    final_scores = (0.7 * faiss_scores) + (0.3 * bm25_norm)\n    \n    # Popularity boost\n    pop_score = np.log1p(df['vote_count']) * (df['vote_average'] / 10.0)\n    final_scores += 0.05 * (pop_score / (np.max(pop_score) + 1e-9))\n    \n    top_indices = np.argsort(final_scores)[::-1][:top_k]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.3,
+    "latency_ms": 20.114650819450617,
+    "llm_cost_usd": 0.000997
+  },
+  "status": "discard",
+  "description": "hybrid BM25 and FAISS with score-based late fusion"
+}
+
+{
+  "exp_id": "exp_447",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:43:37",
+  "prompt_hash": "b6904153",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Increase pool size to allow for more granular re-ranking\n    dists, idxs = index.search(query_vec, 2000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # 1. Semantic Score (inverse L2)\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # 2. Genre Match (bonus if query contains common genre keywords)\n    # Simple check for popularity of genres in query\n    query_lower = query.lower()\n    genre_boost = candidates['genres'].apply(lambda x: 1.2 if any(g.lower() in query_lower for g in x.split(', ')) else 1.0)\n    \n    # 3. Popularity Score (log-normalized)\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Final Rank Score\n    # Combine semantic precision with popularity-based quality ranking\n    candidates['score'] = semantic_score * genre_boost * (1.0 + 0.2 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.54,
+    "latency_ms": 7.4960350058972836,
+    "llm_cost_usd": 0.000978
+  },
+  "status": "discard",
+  "description": "retrieve 2000 candidates via FAISS, then perform a two-stage re-ranking: first by genre match, then by a combined score of semantic distance and popularity."
+}
+
+{
+  "exp_id": "exp_448",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:47:54",
+  "prompt_hash": "9b0e497f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Increase candidate pool to 5000 to maximize recall, then use raw FAISS L2 distance.\n    # L2 distance is naturally sorted (smallest is best).\n    dists, idxs = index.search(query_vec, 5000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use L2 distance directly. Lower is better.\n    # We assign scores such that the smallest L2 distance gets the highest score.\n    # Using negative distance ensures that the smallest L2 becomes the largest score.\n    candidates['score'] = -dists[0]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 7.2593391593545675,
+    "llm_cost_usd": 0.000931
+  },
+  "status": "discard",
+  "description": "Pure FAISS retrieval with a significantly larger 5000-candidate pool and direct L2 distance scoring to maximize recall by avoiding premature filtering."
+}
+
+{
+  "exp_id": "exp_449",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:48:05",
+  "prompt_hash": "07210883",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve top 500 candidates using BM25\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    top_bm25_indices = np.argsort(bm25_scores)[-500:]\n    \n    candidates = df.iloc[top_bm25_indices].copy()\n    \n    # Semantic reranking with FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, len(df))\n    \n    # Create mapping of global index to L2 distance\n    l2_map = dict(zip(idxs[0], dists[0]))\n    \n    # Calculate scores\n    semantic_scores = np.array([1.0 / (1.0 + l2_map.get(i, 10.0)) for i in top_bm25_indices])\n    bm25_norm = (bm25_scores[top_bm25_indices] - np.min(bm25_scores[top_bm25_indices])) / (np.ptp(bm25_scores[top_bm25_indices]) + 1e-6)\n    \n    # Popularity boost\n    pop_score = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    pop_norm = (pop_score - pop_score.min()) / (pop_score.max() - pop_score.min() + 1e-6)\n    \n    # Final weighted score\n    candidates['score'] = (0.5 * semantic_scores) + (0.3 * bm25_norm) + (0.2 * pop_norm)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.4,
+    "latency_ms": 22.03347415663302,
+    "llm_cost_usd": 0.001042
+  },
+  "status": "discard",
+  "description": "Use BM25 for broad recall retrieval on full text, then re-rank the top 500 candidates using FAISS semantic scores and a vote-based popularity boost."
+}
+
+{
+  "exp_id": "exp_450",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:50:51",
+  "prompt_hash": "0ae74c48",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # BM25 initial retrieval from full text\n    bm25_scores = bm25.get_scores(query.lower().split())\n    # Retrieve a wide pool\n    pool_size = 1000\n    candidate_idxs = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    candidates = df.iloc[candidate_idxs].copy()\n    \n    # Semantic score from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, len(df))\n    \n    # Map global FAISS distances back to our candidate subset\n    # Create a mapping dictionary for O(1) lookups\n    dist_map = {idx: dist for idx, dist in zip(idxs[0], dists[0])}\n    candidates['dist'] = [dist_map.get(i, 10.0) for i in candidates.index]\n    \n    # Normalize BM25 and Semantic scores\n    bm25_vals = bm25_scores[candidate_idxs]\n    semantic_vals = 1.0 / (1.0 + candidates['dist'])\n    \n    # Popularity boost\n    pop_score = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Final Score: Hybrid rank fusion\n    candidates['score'] = (bm25_vals / bm25_vals.max()) + (semantic_vals * 2.0) + (pop_score * 0.1)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.44,
+    "latency_ms": 22.120822500437498,
+    "llm_cost_usd": 0.001025
+  },
+  "status": "discard",
+  "description": "Retrieve 1000 candidates via BM25 on the concatenated text (title + overview), then re-rank using semantic similarity and popularity normalization."
+}
+
+{
+  "exp_id": "exp_451",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:50:55",
+  "prompt_hash": "e9da8e9a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Increase candidate pool to capture more potential matches for reranking\n    # 2000 is chosen as a balance between recall and performance\n    dists, idxs = index.search(query_vec, 2000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate semantic similarity score\n    # 1 / (1 + L2) converts distance to a [0, 1] similarity metric\n    candidates['score'] = 1.0 / (1.0 + dists[0])\n    \n    # We return the top_k results based on semantic similarity alone,\n    # as extra heuristic scoring in history often introduced noise.\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 6.106495838612318,
+    "llm_cost_usd": 0.000944
+  },
+  "status": "discard",
+  "description": "Pure FAISS retrieval with expanded candidate pool and adaptive L2-based semantic ranking"
+}
+
+{
+  "exp_id": "exp_452",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:51:04",
+  "prompt_hash": "9915fb65",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve a wide pool\n    dists, idxs = index.search(query_vec, 2000)\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # 1. Semantic score (normalized)\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # 2. BM25 score on title\n    tokenized_query = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized_query)\n    # Get scores for the candidate subset\n    cand_bm25 = bm25_scores[idxs[0]]\n    \n    # 3. Combine: RRF-style scoring (avoiding division by zero)\n    # Boost by popularity to break ties\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Standardize and fuse\n    s_norm = (semantic_score - np.mean(semantic_score)) / (np.std(semantic_score) + 1e-9)\n    b_norm = (cand_bm25 - np.mean(cand_bm25)) / (np.std(cand_bm25) + 1e-9)\n    \n    candidates['score'] = (0.7 * s_norm + 0.3 * b_norm) + (0.1 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.32,
+    "latency_ms": 20.569631662219763,
+    "llm_cost_usd": 0.001025
+  },
+  "status": "discard",
+  "description": "retrieve 2000 candidates via FAISS, then perform re-ranking using an exponential weight of normalized BM25 score (on title) and semantic similarity."
+}
+
+{
+  "exp_id": "exp_453",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:51:09",
+  "prompt_hash": "1891c275",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve a large pool to maximize semantic recall\n    dists, idxs = index.search(query_vec, 2000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use raw rank as a base to dampen distance noise\n    rank = np.arange(len(candidates))\n    \n    # Popularity boost: normalize using log1p of vote_count\n    # Additive approach to avoid zeroing out results\n    pop = np.log1p(candidates['vote_count'])\n    pop_norm = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)\n    \n    # Combine rank-based penalty with popularity boost\n    # Lower rank (0) is better, so we subtract rank/len from boost\n    candidates['score'] = (1.0 - (rank / 2000.0)) + (0.2 * pop_norm)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.52,
+    "latency_ms": 6.850135000422597,
+    "llm_cost_usd": 0.000975
+  },
+  "status": "discard",
+  "description": "pure FAISS retrieval with large candidate pool and rank-based popularity boost"
+}
+
+{
+  "exp_id": "exp_454",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:51:19",
+  "prompt_hash": "651c54d9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Use BM25 to get a wide candidate pool for recall\n    tokenized_query = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    # Retrieve top 1000 candidates via BM25 index\n    candidate_indices = np.argsort(bm25_scores)[-1000:]\n    \n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Semantic search over the candidate pool\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Calculate FAISS distance for the specific subset\n    # Note: index.search does a full search, we filter by BM25 subset\n    dists, _ = index.search(query_vec, len(df))\n    \n    # Map back to our subset\n    subset_dists = dists[0][candidate_indices]\n    \n    # Semantic score: 1 / (1 + L2)\n    semantic_score = 1.0 / (1.0 + subset_dists)\n    \n    # Normalize popularity: log1p(vote_count) scaled by average\n    popularity_score = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Combine semantic similarity and popularity\n    candidates['score'] = semantic_score * (1.0 + 0.2 * popularity_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.32,
+    "latency_ms": 21.17759333923459,
+    "llm_cost_usd": 0.001027
+  },
+  "status": "discard",
+  "description": "Retrieve 1000 candidates via BM25, then perform a two-stage re-ranking: first by semantic similarity using FAISS, then by applying a popularity-based weight to the semantic score."
+}
+
+{
+  "exp_id": "exp_455",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:51:28",
+  "prompt_hash": "5cb754d7",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # BM25 on title/text for keyword recall\n    bm25_scores = bm25.get_scores(query_tokens)\n    bm25_top_idx = np.argsort(bm25_scores)[::-1][:200]\n    \n    # FAISS for semantic recall\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, faiss_idx = index.search(query_vec, 200)\n    \n    # RRF to combine\n    rank_map = {}\n    for r, i in enumerate(bm25_top_idx):\n        rank_map[i] = rank_map.get(i, 0) + 1.0 / (60.0 + r)\n    for r, i in enumerate(faiss_idx[0]):\n        rank_map[i] = rank_map.get(i, 0) + 1.0 / (60.0 + r)\n        \n    top_indices = sorted(rank_map, key=rank_map.get, reverse=True)[:top_k]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 18.932295003905892,
+    "llm_cost_usd": 0.000992
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 on titles and FAISS on overview, with reciprocal rank fusion for balanced retrieval."
+}
+
+{
+  "exp_id": "exp_456",
+  "objective": "recall",
+  "timestamp": "2026-05-17T03:51:38",
+  "prompt_hash": "cb0a94c7",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve wider pool for RRF\n    bm25_scores = bm25.get_scores(query_tokens)\n    bm25_top_idx = np.argsort(bm25_scores)[::-1][:1000]\n    \n    faiss_dists, faiss_idx = index.search(query_vec, 1000)\n    faiss_idx = faiss_idx[0]\n    \n    # RRF (Reciprocal Rank Fusion)\n    rank_map = {}\n    for i, idx in enumerate(bm25_top_idx):\n        rank_map[idx] = rank_map.get(idx, 0) + 1.0 / (60 + i)\n    for i, idx in enumerate(faiss_idx):\n        rank_map[idx] = rank_map.get(idx, 0) + 1.0 / (60 + i)\n        \n    candidate_ids = list(rank_map.keys())\n    candidates = df.iloc[candidate_ids].copy()\n    candidates['rrf_score'] = [rank_map[i] for i in candidate_ids]\n    \n    # Popularity boost: log1p(vote_count) * (vote_average / 10)\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    candidates['score'] = candidates['rrf_score'] * (1.0 + 0.1 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.36,
+    "latency_ms": 21.334374994039536,
+    "llm_cost_usd": 0.001045
+  },
+  "status": "discard",
+  "description": "Expand candidate pool, apply RRF to combine BM25 and FAISS scores, use popularity for tie-breaking"
+}
+
+{
+  "exp_id": "exp_457",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:05:43",
+  "prompt_hash": "5ce1ef04",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve a large pool to maximize candidate coverage for recall@10\n    dists, idxs = index.search(query_vec, 1000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use direct inverse L2 distance to rank candidates\n    # This keeps the logic minimal to ensure low latency and high stability\n    candidates['score'] = 1.0 / (1.0 + dists[0])\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 7.770692501217127,
+    "llm_cost_usd": 0.00095
+  },
+  "status": "discard",
+  "description": "Pure FAISS retrieval with an aggressive 1000-candidate pool and inverse L2 semantic scoring to maximize recall by avoiding premature filtering."
+}
+
+{
+  "exp_id": "exp_458",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:05:53",
+  "prompt_hash": "264725aa",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # Get BM25 scores for broad candidate pool\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Get FAISS semantic scores\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Normalize BM25 scores\n    bm25_max = np.max(bm25_scores) if np.max(bm25_scores) > 0 else 1.0\n    bm25_norm = bm25_scores / bm25_max\n    \n    # Create candidate pool from FAISS results\n    candidate_indices = idxs[0]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Semantic score: 1 / (1 + L2)\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # Combine BM25 scores for candidates in pool\n    bm25_pool_scores = bm25_norm[candidate_indices]\n    \n    # Popularity metric\n    pop = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Hybrid score: Linear combination of semantic and keyword signals\n    candidates['score'] = (0.6 * semantic_score) + (0.4 * bm25_pool_scores)\n    candidates['score'] *= (1.0 + 0.1 * pop)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.41,
+    "latency_ms": 20.355513337999582,
+    "llm_cost_usd": 0.001051
+  },
+  "status": "discard",
+  "description": "Hybrid retrieval using BM25 on text for recall and FAISS semantic similarity for precision, with popularity-weighted re-ranking."
+}
+
+{
+  "exp_id": "exp_459",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:06:04",
+  "prompt_hash": "0cf51f7d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. FAISS retrieval on full text (overview+title) for semantic recall\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, faiss_idxs = index.search(query_vec, 100)\n    \n    # 2. BM25 retrieval on titles\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    # 3. Combine with Reciprocal Rank Fusion\n    # Get top candidates from both methods\n    results = {}\n    \n    # Add FAISS ranks\n    for rank, idx in enumerate(faiss_idxs[0]):\n        results[idx] = results.get(idx, 0) + 1.0 / (60 + rank)\n        \n    # Add BM25 ranks (top 100)\n    bm25_top_idxs = np.argsort(bm25_scores)[-100:][::-1]\n    for rank, idx in enumerate(bm25_top_idxs):\n        results[idx] = results.get(idx, 0) + 1.0 / (60 + rank)\n        \n    # 4. Sort and return\n    top_indices = sorted(results, key=results.get, reverse=True)[:top_k]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 20.70606417953968,
+    "llm_cost_usd": 0.001026
+  },
+  "status": "discard",
+  "description": "Use BM25 on the title field for high-precision recall, combine with FAISS vector similarity on the overview field via RRF (k=60), and return the highest ranked."
+}
+
+{
+  "exp_id": "exp_460",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:06:08",
+  "prompt_hash": "42ed8e93",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Base semantic score (1 / (1 + L2))\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # Title match boost: check if query terms are in the title\n    query_terms = query.lower().split()\n    title_match_boost = candidates['title'].apply(\n        lambda x: sum(1 for term in query_terms if term in x.lower())\n    )\n    \n    # Combine: semantic similarity * title boost (1.0 to 1.5 multiplier)\n    candidates['score'] = semantic_score * (1.0 + 0.5 * (title_match_boost / (1.0 + title_match_boost)))\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.17,
+    "latency_ms": 6.937166685238481,
+    "llm_cost_usd": 0.001002
+  },
+  "status": "discard",
+  "description": "Retrieve 1000 candidates via FAISS, then perform re-ranking using an inverse L2 distance score, with a boost for movies where the query terms appear in the title."
+}
+
+{
+  "exp_id": "exp_461",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:06:18",
+  "prompt_hash": "6caee21b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve 500 candidates using BM25\n    bm25_scores = bm25.get_scores(query.lower().split())\n    top_indices = np.argsort(bm25_scores)[-500:]\n    candidates = df.iloc[top_indices].copy()\n    \n    # Calculate FAISS semantic score for these candidates\n    query_vec = model.encode([query]).astype(\"float32\")\n    # We map indices back to the index for specific retrieval\n    # Re-encoding/searching is done to stay within the constraint\n    dists, _ = index.search(query_vec, 500)\n    \n    # Combine scores: normalized BM25 + FAISS semantic similarity\n    # Popularity boost: log1p(vote_count) * (vote_average / 10)\n    semantic_score = 1.0 / (1.0 + dists[0][:len(candidates)])\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Final score: Balance BM25 rank and semantic similarity\n    candidates['score'] = (bm25_scores[top_indices] * 0.3) + (semantic_score * 0.7) + (popularity * 0.1)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.25,
+    "latency_ms": 21.357464157044888,
+    "llm_cost_usd": 0.00104
+  },
+  "status": "discard",
+  "description": "Use BM25 for broad recall retrieval on full text, then re-rank the top 500 candidates using FAISS semantic scores and a popularity-based boost."
+}
+
+{
+  "exp_id": "exp_462",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:06:22",
+  "prompt_hash": "46efd27e",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve a larger pool to maximize recall\n    dists, idxs = index.search(query_vec, 2000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use inverse distance as the primary semantic signal\n    # Add a small epsilon to avoid division by zero\n    candidates['score'] = 1.0 / (dists[0] + 1e-6)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 9.605153324082494,
+    "llm_cost_usd": 0.000965
+  },
+  "status": "discard",
+  "description": "pure FAISS retrieval with a significantly larger candidate pool of 2000 and simple inverse distance scoring for maximum recall"
+}
+
+{
+  "exp_id": "exp_463",
+  "objective": "recall",
+  "timestamp": "2026-05-17T04:06:34",
+  "prompt_hash": "830e6bef",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve broad candidate pool using BM25\n    bm25_scores = bm25.get_scores(query.lower().split())\n    # Retrieve top 500 based on BM25\n    candidate_idxs = np.argsort(bm25_scores)[-500:][::-1]\n    candidates = df.iloc[candidate_idxs].copy()\n    \n    # Get embeddings for query\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Get candidate indices for FAISS\n    # Note: We need the full index search to get distances, then filter to our BM25 pool\n    dists, idxs = index.search(query_vec, len(df))\n    \n    # Map index positions to distances\n    dist_map = dict(zip(idxs[0], dists[0]))\n    \n    candidates['dist'] = [dist_map.get(i, 10.0) for i in candidate_idxs]\n    candidates['bm25'] = bm25_scores[candidate_idxs]\n    \n    # Normalize BM25 and Semantic score\n    norm_bm25 = (candidates['bm25'] - candidates['bm25'].min()) / (candidates['bm25'].max() - candidates['bm25'].min() + 1e-6)\n    semantic_score = 1.0 / (1.0 + candidates['dist'])\n    \n    # Popularity boost\n    pop_score = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Final score: balanced semantic and keyword relevance with popularity boost\n    candidates['score'] = (0.4 * norm_bm25) + (0.4 * semantic_score) + (0.2 * pop_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.44,
+    "latency_ms": 24.928469164296985,
+    "llm_cost_usd": 0.001091
+  },
+  "status": "discard",
+  "description": "Perform BM25 retrieval on full text to get a large pool, then re-rank with FAISS semantic score and popularity-based weighted scoring."
+}
+

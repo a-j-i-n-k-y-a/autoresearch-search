@@ -959,6 +959,28 @@ def document_architecture(best_metrics, baseline_metrics, objective, n_experimen
     discarded = [r for r in history if r["status"] == "discard"]
     crashed   = [r for r in history if r["status"] == "crash"]
 
+    # ── Honest null result — no fabricated architecture if nothing improved ──
+    if not kept:
+        content = f"""---
+objective  : {objective}
+generated  : {time.strftime("%Y-%m-%dT%H:%M:%S")}
+result     : NO IMPROVEMENT FOUND
+---
+
+# No improvements kept for objective: {objective}
+
+{len(history)} experiments ran. None cleared all constraints.
+Baseline recall : {baseline_metrics['recall']:.3f}
+Baseline latency: {baseline_metrics['latency_ms']:.1f}ms
+
+See experiments/log.jsonl for full attempt history.
+"""
+        write_file(f"ARCHITECTURE_{objective}.md", content)
+        subprocess.run(["git", "add", f"ARCHITECTURE_{objective}.md"])
+        subprocess.run(["git", "commit", "-m", f"docs: no improvement found for objective={objective}"])
+        print(f"   No improvements kept — honest null result written.")
+        return
+
     # ── Resolve best experiment's exp_id and prompt_hash ──
     best_kept        = best_from_history(history, objective)
     best_exp_id      = "unknown"
@@ -974,27 +996,44 @@ def document_architecture(best_metrics, baseline_metrics, objective, n_experimen
             best_exp_id      = matched["exp_id"]
             best_prompt_hash = matched.get("prompt_hash", "unknown")
 
-    kept = [r for r in history if r["status"] == "keep" 
-                and not is_baseline(r["description"])]
-    
-    if not kept:
-        # honest null result
-        prompt = f"""---
-            objective  : {objective}
-            generated  : {time.strftime("%Y-%m-%dT%H:%M:%S")}
-            result     : NO IMPROVEMENT FOUND
-            ---
+    # ── Build LLM prompt ──
+    prompt = f"""
+                You are documenting the final architecture of an autonomously optimised movie search system.
 
-            # No improvements kept for objective: {objective}
+                ## Winning experiment reference:
+                - exp_id      : {best_exp_id}
+                - prompt_hash : {best_prompt_hash}
+                - Prompt file : experiments/prompts/{best_prompt_hash}.txt
 
-            {len(history)} experiments ran. None cleared all constraints.
-            Baseline recall: {baseline_metrics['recall']:.3f}
-            Baseline latency: {baseline_metrics['latency_ms']:.1f}ms
+                ## Winning search.py:
+                ```python
+                {search_py}
+                ```
 
-            See experiments/log.jsonl for full attempt history.
-            """
-        write_file(f"ARCHITECTURE_{objective}.md", prompt)
-        return
+                ## Experiment summary:
+                - Baseline  → recall={baseline_metrics['recall']:.3f}  latency={baseline_metrics['latency_ms']:.1f}ms
+                - Final     → recall={best_metrics['recall']:.3f}  latency={best_metrics['latency_ms']:.1f}ms  cost=${best_metrics['llm_cost_usd']:.6f}
+                - Objective : {objective}
+                - Total experiments : {n_experiments}  |  Kept: {len(kept)}  |  Discarded: {len(discarded)}  |  Crashed: {len(crashed)}
+
+                ## Full experiment history:
+                {chr(10).join([format_history_entry(r) for r in history])}
+
+                Write a concise ARCHITECTURE.md with sections:
+                # Architecture
+                ## What it does
+                ## Components
+                ## Why it works
+                ## Tradeoffs
+                ## Key experiments
+                ## Metrics
+                | Metric | Baseline | Final |
+                |--------|----------|-------|
+                | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
+                | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
+                ## How to run
+                Return only the markdown. No preamble.
+                """
 
     response = call_api([{"role": "user", "content": prompt}])
     content  = response.choices[0].message.content.strip()

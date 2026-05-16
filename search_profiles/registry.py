@@ -6,9 +6,9 @@
 PROFILES = {
     "high_recall": {
         "module": "search_profiles.high_recall",
-        "recall": 0.54,
-        "latency_ms": 12.154506659135222,
-        "cost_usd": 0.000655,
+        "recall": 0.55,
+        "latency_ms": 5.991932507604361,
+        "cost_usd": 0.000924,
         "description": "maximize recall — best for full search pages",
         "objective": "recall",
         "use_when": "accuracy matters most — full search, recommendation",
@@ -34,4 +34,4 @@ PROFILES = {
 }
 
 # Fallback when constraint is unknown or profile file missing
-DEFAULT_PROFILE = "balanced"
+DEFAULT_PROFILE = "high_recall"

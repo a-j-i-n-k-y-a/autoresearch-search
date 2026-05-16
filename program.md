@@ -46,6 +46,10 @@ def search(query, df, bm25, model, index, top_k=10):
 - `df` has columns: title, overview, genres, vote_count, vote_average
 - Function signature must be exactly: def search(query, df, bm25, model, index, top_k=10)
 - Return format must be: df[...].to_dict("records") with at least title column
+- Never rerank more than top 100 candidates
+- Avoid nested loops over candidate pools
+- Never call model.encode() inside loops
+- Avoid repeated dataframe filtering
 
 ## Experiment ideas
 
