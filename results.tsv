@@ -308,3 +308,102 @@ exp_306	discarded	0.196078	9.0	0.000613	discard	# FAISS search with inverse L2
 exp_307	discarded	0.460784	9.7	0.000624	discard	# Popularity boost with raw FAISS
 exp_308	discarded	0.450980	8.3	0.000644	discard	# Boost FAISS using popularity log-rank
 exp_309	discarded	0.450980	8.0	0.000650	discard	# Boost FAISS by score scaling
+exp_310	discarded	0.220000	23.1	0.000667	discard	# BM25 retrieve, re-rank with genre
+exp_311	discarded	0.220000	11.8	0.000584	discard	# Embed concatenated text for search
+exp_312	e25b142	0.410000	13.9	0.000647	keep	# FAISS retrieval, popularity score boost
+exp_313	discarded	0.220000	11.6	0.000652	discard	# FAISS with genre-weighted boost
+exp_314	f13b1dc	0.540000	12.2	0.000655	keep	# Log-popularity boosted FAISS search
+exp_315	discarded	0.220000	13.1	0.000636	discard	# Pure FAISS with distance scaling
+exp_316	discarded	0.220000	12.1	0.000658	discard	FAISS with genre overlap bonus
+exp_317	discarded	0.270000	38.3	0.000682	discard	# Hybrid FAISS/BM25 reciprocal rank
+exp_318	discarded	0.220000	10.4	0.000615	discard	# Pure FAISS minimal search
+exp_319	discarded	0.480000	11.1	0.000672	discard	# Boosted FAISS with genre bias
+exp_320	discarded	0.220000	11.1	0.000605	discard	Pure FAISS minimal search.
+exp_321	discarded	0.220000	11.1	0.000609	discard	# Pure FAISS with smaller pool
+exp_322	discarded	0.220000	10.9	0.000606	discard	# Minimal FAISS search
+exp_323	discarded	0.220000	12.9	0.000624	discard	# Pure FAISS with 50 pool
+exp_324	discarded	0.220000	12.3	0.000626	discard	# Pure FAISS with 50 candidates
+exp_325	discarded	0.220000	11.1	0.000622	discard	Pure FAISS search minimal.
+exp_326	discarded	0.220000	12.6	0.000622	discard	# Pure FAISS minimal search
+exp_327	discarded	0.220000	12.0	0.000611	discard	# Pure FAISS minimal search
+exp_328	discarded	0.220000	12.6	0.000623	discard	# Pure FAISS search
+exp_329	discarded	0.220000	12.7	0.000611	discard	# Pure FAISS minimal search
+exp_330	discarded	0.270000	41.5	0.000745	discard	# BM25 retrieve, re-rank by FAISS
+exp_331	06ddbbb	0.540000	13.7	0.000658	keep	# Log-popularity boosted FAISS search
+exp_332	discarded	0.320000	13.0	0.000663	discard	# Multi-vector query expansion search
+exp_333	discarded	0.220000	10.7	0.000615	discard	# Pure FAISS with distance scaling
+exp_334	discarded	0.450000	11.3	0.000672	discard	# FAISS with rating/pop boost
+exp_335	dd91d03	0.520000	11.4	0.000679	keep	# Log-popularity and rating boost
+exp_336	discarded	0.480000	11.1	0.000693	discard	# FAISS distance with sigmoid scaling
+exp_337	discarded	0.220000	10.6	0.000692	discard	# FAISS with genre-word embedding boost
+exp_338	discarded	0.320000	12.3	0.000678	discard	# Boost FAISS by normalized rating
+exp_339	discarded	0.480000	10.6	0.000674	discard	# Boost FAISS by vote count
+exp_340	discarded	0.220000	11.4	0.000624	discard	Pure FAISS minimal search
+exp_341	discarded	0.220000	11.0	0.000626	discard	# Pure FAISS search
+exp_342	discarded	0.220000	10.7	0.000629	discard	# Pure FAISS with 10 pool
+exp_343	discarded	0.220000	10.7	0.000628	discard	# Pure FAISS minimal search
+exp_344	discarded	0.220000	10.9	0.000637	discard	# Pure FAISS with 50 pool
+exp_345	discarded	0.220000	10.4	0.000634	discard	# Pure FAISS with 30 pool
+exp_346	discarded	0.220000	10.7	0.000632	discard	Pure FAISS search minimal.
+exp_347	discarded	0.220000	10.7	0.000633	discard	Pure FAISS with direct index search.
+exp_348	discarded	0.220000	10.9	0.000634	discard	# Pure FAISS minimal search
+exp_349	discarded	0.220000	11.0	0.000634	discard	Pure FAISS minimal search
+exp_350	discarded	0.220000	11.0	0.000639	discard	# Pure FAISS minimal search
+exp_351	discarded	0.220000	10.7	0.000642	discard	# Pure FAISS minimal search
+exp_352	discarded	0.220000	10.7	0.000644	discard	# Minimal FAISS top-k search
+exp_353	discarded	0.220000	11.0	0.000644	discard	# Direct FAISS index search
+exp_354	discarded	0.220000	12.2	0.000646	discard	# Minimal FAISS top-k index search
+exp_355	discarded	0.220000	10.9	0.000646	discard	Pure FAISS minimal search.
+exp_356	discarded	0.220000	11.2	0.000647	discard	# Pure FAISS with flat search
+exp_357	discarded	0.220000	10.5	0.000648	discard	Pure FAISS minimal search
+exp_358	discarded	0.220000	10.1	0.000649	discard	# Pure FAISS with direct slicing
+exp_359	discarded	0.220000	10.6	0.000650	discard	# Pure FAISS minimal search
+exp_360	discarded	0.220000	10.9	0.000667	discard	# Pure FAISS with 50 candidates
+exp_361	discarded	0.220000	11.2	0.000652	discard	# Minimal pure FAISS search
+exp_362	discarded	0.220000	11.0	0.000653	discard	# Pure FAISS minimal retrieval
+exp_363	discarded	0.220000	11.1	0.000654	discard	Pure FAISS with minimum overhead.
+exp_364	discarded	0.220000	11.9	0.000655	discard	Pure FAISS minimal search
+exp_365	discarded	0.220000	10.8	0.000654	discard	# Minimal FAISS search with indexing
+exp_366	discarded	0.220000	11.0	0.000657	discard	# Pure FAISS with direct access
+exp_367	discarded	0.220000	10.8	0.000659	discard	# Minimal FAISS search with 10k
+exp_368	discarded	0.220000	10.5	0.000660	discard	Pure FAISS direct index search.
+exp_369	discarded	0.220000	10.7	0.000660	discard	# Pure FAISS search
+exp_370	discarded	0.220000	10.8	0.000659	discard	# Pure FAISS with direct slicing
+exp_371	discarded	0.220000	10.8	0.000661	discard	# Minimal FAISS search
+exp_372	discarded	0.220000	11.9	0.000663	discard	# Minimal FAISS top-k search
+exp_373	discarded	0.220000	10.9	0.000664	discard	# Pure FAISS minimal retrieval
+exp_374	discarded	0.220000	10.9	0.000664	discard	Pure FAISS minimal search
+exp_375	discarded	0.220000	10.8	0.000663	discard	Pure FAISS minimal search
+exp_376	discarded	0.220000	10.6	0.000666	discard	Pure FAISS minimal search
+exp_377	discarded	0.220000	10.8	0.000667	discard	# Pure FAISS minimal search
+exp_378	discarded	0.220000	10.3	0.000667	discard	Minimal FAISS index lookup
+exp_379	discarded	0.220000	10.9	0.000667	discard	Direct FAISS index search
+exp_380	discarded	0.220000	12.4	0.000666	discard	# Minimal FAISS search
+exp_381	discarded	0.220000	10.6	0.000670	discard	Pure FAISS direct index search.
+exp_382	discarded	0.220000	12.6	0.000672	discard	# Minimal FAISS top-k index lookup
+exp_383	discarded	0.220000	11.8	0.000672	discard	# Minimal pure FAISS lookup
+exp_384	discarded	0.220000	10.3	0.000673	discard	# Optimized direct FAISS index search
+exp_385	discarded	0.000000	19.7	0.000820	discard	Use BM25 to score the entire dataset first, then refine the top 200 candidates using FAISS L2 distance.
+exp_386	discarded	0.220000	6.4	0.000769	discard	Re-rank using a combined score of FAISS distance and a genre-match boost from the query string
+exp_387	discarded	0.280000	19.9	0.000849	discard	use a two-stage approach with BM25 for retrieval and FAISS for final re-ranking
+exp_388	crash	0.000000	0.0	0.000782	crash	Query expansion using local pseudo-relevance feedback to re-rank FAISS results
+exp_389	discarded	0.330000	25.6	0.000841	discard	Multi-field expansion: concatenate title and overview for embedding, and combine with BM25 via normalized score fusion
+exp_390	discarded	0.460000	20.5	0.000840	discard	Hybrid retrieval using BM25 and FAISS with score-based late fusion
+exp_391	discarded	0.270000	20.1	0.000816	discard	Hybrid search using log-normalized BM25 scores and FAISS L2 distance via reciprocal rank fusion to balance semantic and keyword relevance.
+exp_392	discarded	0.390000	6.1	0.000819	discard	Hybrid retrieval using a larger FAISS candidate pool followed by genre-aware reranking and popularity adjustment
+exp_393	discarded	0.270000	20.3	0.000855	discard	Hybrid retrieval using FAISS for top-K extraction and BM25 on full text for secondary reranking of the top pool
+exp_394	discarded	0.220000	5.2	0.000712	discard	direct FAISS lookup with minimal index overhead
+exp_395	discarded	0.220000	5.7	0.000718	discard	Minimalist direct FAISS index search to minimize latency
+exp_396	discarded	0.220000	6.3	0.000720	discard	Pure FAISS minimal search with reduced candidate pool size to minimize latency.
+exp_397	discarded	0.220000	5.6	0.000718	discard	Minimalist FAISS retrieval with direct indexing
+exp_398	discarded	0.220000	5.8	0.000731	discard	Pure FAISS minimal search with optimized candidate pool and direct indexing
+exp_399	discarded	0.220000	8.8	0.000721	discard	Minimalist FAISS search with early exit on top_k results.
+exp_400	discarded	0.220000	9.1	0.000718	discard	minimalist pure FAISS search
+exp_401	discarded	0.220000	6.9	0.000720	discard	minimalist pure FAISS search to minimize latency and cost
+exp_402	discarded	0.220000	6.3	0.000720	discard	Minimal pure FAISS search to minimize latency and token cost
+exp_403	discarded	0.460000	6.7	0.000748	discard	simple FAISS with vote_count log-boost
+exp_404	discarded	0.300000	20.3	0.000862	discard	Use BM25 for broad recall retrieval and FAISS for semantic re-ranking
+exp_405	discarded	0.260000	21.9	0.000838	discard	Hybrid retrieval using BM25 with a title-boost factor and FAISS for semantic re-ranking with popularity-based score adjustment
+exp_406	discarded	0.290000	21.3	0.000872	discard	Hybrid retrieval using BM25 with a title-boost factor and FAISS for semantic re-ranking with popularity-based score adjustment
+exp_407	discarded	0.330000	20.5	0.000871	discard	hybrid search with BM25 title word match boost and FAISS distance refinement
+exp_408	discarded	0.270000	19.7	0.000906	discard	RRF of BM25 and FAISS with corrected score normalization

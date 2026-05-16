@@ -4324,3 +4324,1488 @@
   "description": "# Boost FAISS by score scaling"
 }
 
+{
+  "exp_id": "exp_310",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:42:23",
+  "prompt_hash": "d59e2cd3",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # BM25 retrieval of 200 candidates\n    bm25_scores = bm25.get_scores(query.lower().split())\n    candidates_idx = np.argpartition(bm25_scores, -200)[-200:]\n    \n    # Calculate genre relevance (simple overlap count)\n    query_genres = [g.strip().lower() for g in query.split() if g.lower() in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"adventure\"]]\n    \n    scores = bm25_scores[candidates_idx]\n    if query_genres:\n        for i, idx in enumerate(candidates_idx):\n            movie_genres = str(df.iloc[idx][\"genres\"]).lower()\n            match_count = sum(1 for g in query_genres if g in movie_genres)\n            scores[i] *= (1.0 + 0.5 * match_count)\n            \n    final_idx = candidates_idx[np.argsort(scores)[-top_k:][::-1]]\n    return df.iloc[final_idx].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 23.054051660001278,
+    "llm_cost_usd": 0.000667
+  },
+  "status": "discard",
+  "description": "# BM25 retrieve, re-rank with genre"
+}
+
+{
+  "exp_id": "exp_311",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:42:36",
+  "prompt_hash": "7f2269d3",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Use full text for better semantic representation\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.76288084127009,
+    "llm_cost_usd": 0.000584
+  },
+  "status": "discard",
+  "description": "# Embed concatenated text for search"
+}
+
+{
+  "exp_id": "exp_312",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:42:51",
+  "prompt_hash": "625fcc82",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    # Retrieve larger pool for re-ranking\n    pool_size = 100\n    dists, idxs = index.search(query_vec, pool_size)\n    \n    # Extract candidates\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Normalize vote_count for popularity boost\n    max_votes = df['vote_count'].max()\n    popularity_boost = (candidates['vote_count'] / max_votes) * 0.1\n    \n    # Score = (inverted L2 distance) + popularity_boost\n    # L2 distance is smaller for better matches\n    scores = (1.0 / (1.0 + dists[0])) + popularity_boost\n    \n    candidates['score'] = scores\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.41,
+    "latency_ms": 13.878422500565648,
+    "llm_cost_usd": 0.000647
+  },
+  "status": "keep",
+  "description": "# FAISS retrieval, popularity score boost"
+}
+
+{
+  "exp_id": "exp_313",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:43:04",
+  "prompt_hash": "9eb3f23f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 50)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate similarity score\n    scores = 1.0 / (1.0 + dists[0])\n    \n    # Boost by genre match\n    query_lower = query.lower()\n    genre_boost = candidates['genres'].apply(lambda x: 0.2 if any(g.lower() in query_lower for g in x.split(', ')) else 0.0)\n    \n    candidates['score'] = scores + genre_boost\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.59483166411519,
+    "llm_cost_usd": 0.000652
+  },
+  "status": "discard",
+  "description": "# FAISS with genre-weighted boost"
+}
+
+{
+  "exp_id": "exp_314",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:43:17",
+  "prompt_hash": "f5920c6d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Log-popularity boost: log(1 + vote_count)\n    # This prevents extreme outliers from dominating\n    popularity = np.log1p(candidates['vote_count'])\n    \n    # L2 distance is smaller for better matches, so subtract it\n    # Use negative L2 distance to map to a standard \"higher is better\" scale\n    scores = -dists[0] + (popularity * 0.5)\n    \n    candidates['score'] = scores\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.54,
+    "latency_ms": 12.154506659135222,
+    "llm_cost_usd": 0.000655
+  },
+  "status": "keep",
+  "description": "# Log-popularity boosted FAISS search"
+}
+
+{
+  "exp_id": "exp_315",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:43:31",
+  "prompt_hash": "b51c6503",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    # Increase pool significantly to allow for better distribution of distances\n    dists, idxs = index.search(query_vec, 1000)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Simple negative L2 allows higher values to be better. \n    # Use standard scaling to keep variance within a reasonable range.\n    scores = -dists[0]\n    \n    candidates['score'] = scores\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 13.058430841192603,
+    "llm_cost_usd": 0.000636
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with distance scaling"
+}
+
+{
+  "exp_id": "exp_316",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:43:45",
+  "prompt_hash": "24063c9b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate genre match bonus\n    query_lower = query.lower()\n    genre_bonus = candidates['genres'].apply(\n        lambda x: sum(1 for g in str(x).split(',') if g.strip().lower() in query_lower)\n    )\n    \n    # Negative L2 distance + genre bonus\n    # Distances are already from FAISS (L2), so we invert them\n    candidates['score'] = -dists[0] + (genre_bonus * 2.0)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.063217498362064,
+    "llm_cost_usd": 0.000658
+  },
+  "status": "discard",
+  "description": "FAISS with genre overlap bonus"
+}
+
+{
+  "exp_id": "exp_317",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:44:07",
+  "prompt_hash": "140ea047",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    bm25_scores = bm25.get_scores(query.lower().split())\n    bm25_idxs = np.argsort(bm25_scores)[-100:][::-1]\n    \n    rrf_scores = {}\n    for i, idx in enumerate(idxs[0]):\n        rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (60 + i)\n    for i, idx in enumerate(bm25_idxs):\n        rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (60 + i)\n        \n    top_indices = sorted(rrf_scores, key=rrf_scores.get, reverse=True)[:top_k]\n    \n    results = df.iloc[top_indices].copy()\n    return results.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 38.33703584037721,
+    "llm_cost_usd": 0.000682
+  },
+  "status": "discard",
+  "description": "# Hybrid FAISS/BM25 reciprocal rank"
+}
+
+{
+  "exp_id": "exp_318",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:44:20",
+  "prompt_hash": "a2280c57",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    candidates = df.iloc[idxs[0]].copy()\n    candidates[\"score\"] = -dists[0]\n    return candidates.sort_values(\"score\", ascending=False).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.449648341163993,
+    "llm_cost_usd": 0.000615
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_319",
+  "objective": "recall",
+  "timestamp": "2026-05-16T22:44:32",
+  "prompt_hash": "262b92f4",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Negative L2 distance: higher is better\n    scores = -dists[0]\n    \n    # Genre boost: identify genres in query and boost matching movies\n    query_lower = query.lower()\n    genre_bonus = candidates['genres'].apply(\n        lambda g: sum(1 for genre in g.split(', ') if genre.lower() in query_lower)\n    )\n    \n    # Add genre boost and popularity log-boost\n    scores += genre_bonus * 2.0 + np.log1p(candidates['vote_count']) * 0.1\n    \n    candidates['score'] = scores\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.48,
+    "latency_ms": 11.142583321779966,
+    "llm_cost_usd": 0.000672
+  },
+  "status": "discard",
+  "description": "# Boosted FAISS with genre bias"
+}
+
+{
+  "exp_id": "exp_320",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:46:07",
+  "prompt_hash": "89b844ab",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.08627081848681,
+    "llm_cost_usd": 0.000605
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search."
+}
+
+{
+  "exp_id": "exp_321",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:46:19",
+  "prompt_hash": "dccf5193",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    candidates = df.iloc[idxs[0]].copy()\n    return candidates.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.145520843565464,
+    "llm_cost_usd": 0.000609
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with smaller pool"
+}
+
+{
+  "exp_id": "exp_322",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:46:32",
+  "prompt_hash": "7222101c",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.874779159203172,
+    "llm_cost_usd": 0.000606
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS search"
+}
+
+{
+  "exp_id": "exp_323",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:46:44",
+  "prompt_hash": "bab96ad7",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 50)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = -dists[0]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.92359333485365,
+    "llm_cost_usd": 0.000624
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with 50 pool"
+}
+
+{
+  "exp_id": "exp_324",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:46:56",
+  "prompt_hash": "51eb4a78",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 50)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = -dists[0]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.31296582147479,
+    "llm_cost_usd": 0.000626
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with 50 candidates"
+}
+
+{
+  "exp_id": "exp_325",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:47:07",
+  "prompt_hash": "d451ff0b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = -dists[0]\n    return candidates.sort_values(\"score\", ascending=False).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.05337250046432,
+    "llm_cost_usd": 0.000622
+  },
+  "status": "discard",
+  "description": "Pure FAISS search minimal."
+}
+
+{
+  "exp_id": "exp_326",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:47:20",
+  "prompt_hash": "5203260f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = -dists[0]\n    return candidates.sort_values(\"score\", ascending=False).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.618966680020094,
+    "llm_cost_usd": 0.000622
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_327",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:47:33",
+  "prompt_hash": "7c1b09d3",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.994560835883021,
+    "llm_cost_usd": 0.000611
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_328",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:47:45",
+  "prompt_hash": "2e125a13",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = -dists[0]\n    return candidates.sort_values(\"score\", ascending=False).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.602354157716036,
+    "llm_cost_usd": 0.000623
+  },
+  "status": "discard",
+  "description": "# Pure FAISS search"
+}
+
+{
+  "exp_id": "exp_329",
+  "objective": "latency",
+  "timestamp": "2026-05-16T22:47:57",
+  "prompt_hash": "287f10db",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.725591659545898,
+    "llm_cost_usd": 0.000611
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_330",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:49:24",
+  "prompt_hash": "9ac228db",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # BM25 retrieval to get a larger candidate pool\n    scores_bm25 = bm25.get_scores(query.lower().split())\n    # Retrieve more candidates than top_k for re-ranking\n    candidate_idxs = np.argsort(scores_bm25)[-200:]\n    \n    # Re-rank candidates using FAISS semantic embeddings\n    query_vec = model.encode([query]).astype(\"float32\")\n    # Get vectors for candidates\n    # We use the candidate_idxs to narrow the FAISS search or just re-score\n    dists, _ = index.search(query_vec, len(df))\n    \n    # Extract distances for our candidate pool\n    candidate_dists = dists[0][candidate_idxs]\n    \n    # Combine BM25 normalized scores and L2 distance\n    # Lower L2 is better, higher BM25 is better\n    norm_bm25 = scores_bm25[candidate_idxs]\n    norm_bm25 = (norm_bm25 - norm_bm25.mean()) / (norm_bm25.std() + 1e-9)\n    norm_faiss = -candidate_dists\n    norm_faiss = (norm_faiss - norm_faiss.mean()) / (norm_faiss.std() + 1e-9)\n    \n    final_scores = norm_bm25 + norm_faiss\n    \n    # Sort candidates\n    top_indices = candidate_idxs[np.argsort(final_scores)[::-1][:top_k]]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 41.50923665612936,
+    "llm_cost_usd": 0.000745
+  },
+  "status": "discard",
+  "description": "# BM25 retrieve, re-rank by FAISS"
+}
+
+{
+  "exp_id": "exp_331",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:49:37",
+  "prompt_hash": "cc8151eb",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    popularity = np.log1p(candidates['vote_count'])\n    \n    # Use negative L2 distance (higher is better) combined with popularity\n    # Normalizing distance by 10.0 to balance with log-popularity range\n    candidates['score'] = -dists[0] + (popularity * 0.5)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.54,
+    "latency_ms": 13.690541666001081,
+    "llm_cost_usd": 0.000658
+  },
+  "status": "keep",
+  "description": "# Log-popularity boosted FAISS search"
+}
+
+{
+  "exp_id": "exp_332",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:49:51",
+  "prompt_hash": "5e166b7a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    queries = [query, f\"movie about {query}\"]\n    query_vecs = model.encode(queries).astype(\"float32\")\n    dists, idxs = index.search(query_vecs.mean(axis=0, keepdims=True), 200)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    # Normalize L2 distance to [0, 1] for potential fusion, but here use raw distance\n    # Add vote_average as a quality prior\n    score = -dists[0] + (candidates['vote_average'] * 2.0)\n    \n    candidates['score'] = score\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.32,
+    "latency_ms": 13.046222506090999,
+    "llm_cost_usd": 0.000663
+  },
+  "status": "discard",
+  "description": "# Multi-vector query expansion search"
+}
+
+{
+  "exp_id": "exp_333",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:50:03",
+  "prompt_hash": "f560d012",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.657291654497385,
+    "llm_cost_usd": 0.000615
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with distance scaling"
+}
+
+{
+  "exp_id": "exp_334",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:50:16",
+  "prompt_hash": "a730c33d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Normalize distances: L2 is distance, -dist is similarity\n    # Higher rating and popularity are beneficial\n    # Multiply by factor to ensure they contribute to ranking without overpowering embedding match\n    pop_score = np.log1p(candidates['vote_count'])\n    rating_score = candidates['vote_average']\n    \n    candidates['score'] = -dists[0] + (pop_score * 0.1) + (rating_score * 0.5)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.45,
+    "latency_ms": 11.330555835738778,
+    "llm_cost_usd": 0.000672
+  },
+  "status": "discard",
+  "description": "# FAISS with rating/pop boost"
+}
+
+{
+  "exp_id": "exp_335",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:50:30",
+  "prompt_hash": "840bf4d5",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Combined popularity and quality score\n    pop = np.log1p(candidates['vote_count'])\n    rating = candidates['vote_average']\n    \n    # Normalize L2 distance to [0, 1] range roughly\n    norm_dist = 1.0 / (1.0 + dists[0])\n    \n    # Boost by popularity and rating (log scale)\n    candidates['score'] = norm_dist * (1.0 + 0.1 * pop) * (1.0 + 0.1 * rating)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.52,
+    "latency_ms": 11.4461624994874,
+    "llm_cost_usd": 0.000679
+  },
+  "status": "keep",
+  "description": "# Log-popularity and rating boost"
+}
+
+{
+  "exp_id": "exp_336",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:50:43",
+  "prompt_hash": "9af477bb",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Apply sigmoid-like transformation to L2 distances\n    # L2 is distance, so smaller is better. Transform to similarity [0, 1]\n    # Center around mean distance of results\n    dist_vals = dists[0]\n    scaled_sim = 1.0 / (1.0 + dist_vals / (np.median(dist_vals) + 1e-6))\n    \n    # Boost by popularity log-scale\n    pop = np.log1p(candidates['vote_count'])\n    \n    candidates['score'] = scaled_sim * (1.0 + 0.05 * pop)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.48,
+    "latency_ms": 11.079177502542734,
+    "llm_cost_usd": 0.000693
+  },
+  "status": "discard",
+  "description": "# FAISS distance with sigmoid scaling"
+}
+
+{
+  "exp_id": "exp_337",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:50:56",
+  "prompt_hash": "ae999f73",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate genre relevance boost by checking overlap with query\n    query_words = set(query.lower().split())\n    genre_boost = candidates['genres'].apply(\n        lambda x: sum(1 for word in str(x).lower().split() if word in query_words)\n    )\n    \n    # Combined score: normalized FAISS distance + genre word overlap\n    # We use inverse L2 distance to map small values to high scores\n    scores = (1.0 / (1.0 + dists[0])) + (0.05 * genre_boost)\n    \n    candidates['score'] = scores\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.620210841298103,
+    "llm_cost_usd": 0.000692
+  },
+  "status": "discard",
+  "description": "# FAISS with genre-word embedding boost"
+}
+
+{
+  "exp_id": "exp_338",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:51:09",
+  "prompt_hash": "8f9b5d59",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Use inverse distance for baseline ranking\n    score = 1.0 / (1.0 + dists[0])\n    \n    # Add normalized rating boost\n    # vote_average is 0-10, scale to 0.2 impact\n    rating_boost = (candidates['vote_average'].fillna(0) / 10.0) * 0.2\n    \n    candidates['score'] = score + rating_boost\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.32,
+    "latency_ms": 12.313485844060779,
+    "llm_cost_usd": 0.000678
+  },
+  "status": "discard",
+  "description": "# Boost FAISS by normalized rating"
+}
+
+{
+  "exp_id": "exp_339",
+  "objective": "pareto",
+  "timestamp": "2026-05-16T22:51:21",
+  "prompt_hash": "cc5b18ce",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Distance is L2, lower is better. Convert to similarity.\n    sim = 1.0 / (1.0 + dists[0])\n    \n    # Boost by popularity to break ties in semantic space\n    boost = np.log1p(candidates['vote_count'])\n    candidates['score'] = sim * (1.0 + 0.05 * boost)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.48,
+    "latency_ms": 10.6237958278507,
+    "llm_cost_usd": 0.000674
+  },
+  "status": "discard",
+  "description": "# Boost FAISS by vote count"
+}
+
+{
+  "exp_id": "exp_340",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:23",
+  "prompt_hash": "ccd3feb9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.365202497690916,
+    "llm_cost_usd": 0.000624
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_341",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:28",
+  "prompt_hash": "f8dd2117",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.977497501298785,
+    "llm_cost_usd": 0.000626
+  },
+  "status": "discard",
+  "description": "# Pure FAISS search"
+}
+
+{
+  "exp_id": "exp_342",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:33",
+  "prompt_hash": "10e4c3be",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.661055846139789,
+    "llm_cost_usd": 0.000629
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with 10 pool"
+}
+
+{
+  "exp_id": "exp_343",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:38",
+  "prompt_hash": "b73f79ea",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.69935250096023,
+    "llm_cost_usd": 0.000628
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_344",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:44",
+  "prompt_hash": "1e48d61b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 50)\n    results = df.iloc[idxs[0]].copy()\n    return results.head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.930368341505527,
+    "llm_cost_usd": 0.000637
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with 50 pool"
+}
+
+{
+  "exp_id": "exp_345",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:50",
+  "prompt_hash": "519ea7b9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, 30)\n    return df.iloc[idxs[0]].head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.445551658049226,
+    "llm_cost_usd": 0.000634
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with 30 pool"
+}
+
+{
+  "exp_id": "exp_346",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:06:55",
+  "prompt_hash": "b6058957",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.73240083642304,
+    "llm_cost_usd": 0.000632
+  },
+  "status": "discard",
+  "description": "Pure FAISS search minimal."
+}
+
+{
+  "exp_id": "exp_347",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:07:00",
+  "prompt_hash": "28ecaa48",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.705656660720706,
+    "llm_cost_usd": 0.000633
+  },
+  "status": "discard",
+  "description": "Pure FAISS with direct index search."
+}
+
+{
+  "exp_id": "exp_348",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:07:05",
+  "prompt_hash": "aeb94687",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.91314415447414,
+    "llm_cost_usd": 0.000634
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_349",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:07:10",
+  "prompt_hash": "bab8c024",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.034701680764556,
+    "llm_cost_usd": 0.000634
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_350",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:17",
+  "prompt_hash": "948dc413",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.032170001417398,
+    "llm_cost_usd": 0.000639
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_351",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:23",
+  "prompt_hash": "1672191a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.670315837487578,
+    "llm_cost_usd": 0.000642
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_352",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:28",
+  "prompt_hash": "945faacc",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.684479176998138,
+    "llm_cost_usd": 0.000644
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS top-k search"
+}
+
+{
+  "exp_id": "exp_353",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:33",
+  "prompt_hash": "17c8ba94",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.975523320958018,
+    "llm_cost_usd": 0.000644
+  },
+  "status": "discard",
+  "description": "# Direct FAISS index search"
+}
+
+{
+  "exp_id": "exp_354",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:38",
+  "prompt_hash": "690941f8",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.176635004580021,
+    "llm_cost_usd": 0.000646
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS top-k index search"
+}
+
+{
+  "exp_id": "exp_355",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:43",
+  "prompt_hash": "b152c54a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.876859994605184,
+    "llm_cost_usd": 0.000646
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search."
+}
+
+{
+  "exp_id": "exp_356",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:49",
+  "prompt_hash": "64c3c4a4",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.191919185221195,
+    "llm_cost_usd": 0.000647
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with flat search"
+}
+
+{
+  "exp_id": "exp_357",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:54",
+  "prompt_hash": "5b9263ee",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.530166663229465,
+    "llm_cost_usd": 0.000648
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_358",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:28:59",
+  "prompt_hash": "1309faf2",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.058496678248048,
+    "llm_cost_usd": 0.000649
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with direct slicing"
+}
+
+{
+  "exp_id": "exp_359",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:29:04",
+  "prompt_hash": "f9b648be",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.57878166437149,
+    "llm_cost_usd": 0.00065
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_360",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:38:01",
+  "prompt_hash": "91fa32c4",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 50)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = -dists[0]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.861040819436312,
+    "llm_cost_usd": 0.000667
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with 50 candidates"
+}
+
+{
+  "exp_id": "exp_361",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:38:06",
+  "prompt_hash": "7ded8368",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.233991673216224,
+    "llm_cost_usd": 0.000652
+  },
+  "status": "discard",
+  "description": "# Minimal pure FAISS search"
+}
+
+{
+  "exp_id": "exp_362",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:38:12",
+  "prompt_hash": "6d01c19a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.016871659085155,
+    "llm_cost_usd": 0.000653
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal retrieval"
+}
+
+{
+  "exp_id": "exp_363",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:38:17",
+  "prompt_hash": "15a8ff36",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.128934184089303,
+    "llm_cost_usd": 0.000654
+  },
+  "status": "discard",
+  "description": "Pure FAISS with minimum overhead."
+}
+
+{
+  "exp_id": "exp_364",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:38:23",
+  "prompt_hash": "f4284a2b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.86113833449781,
+    "llm_cost_usd": 0.000655
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_365",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:39:13",
+  "prompt_hash": "990789f5",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.813304176554084,
+    "llm_cost_usd": 0.000654
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS search with indexing"
+}
+
+{
+  "exp_id": "exp_366",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:39:18",
+  "prompt_hash": "607a4218",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.01119665428996,
+    "llm_cost_usd": 0.000657
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with direct access"
+}
+
+{
+  "exp_id": "exp_367",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:39:23",
+  "prompt_hash": "d926e5bb",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.811975002288818,
+    "llm_cost_usd": 0.000659
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS search with 10k"
+}
+
+{
+  "exp_id": "exp_368",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:39:28",
+  "prompt_hash": "6270bfc2",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.485182497650385,
+    "llm_cost_usd": 0.00066
+  },
+  "status": "discard",
+  "description": "Pure FAISS direct index search."
+}
+
+{
+  "exp_id": "exp_369",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:39:34",
+  "prompt_hash": "e52a8838",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.665398333221674,
+    "llm_cost_usd": 0.00066
+  },
+  "status": "discard",
+  "description": "# Pure FAISS search"
+}
+
+{
+  "exp_id": "exp_370",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:41:48",
+  "prompt_hash": "30129fe1",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.83609581924975,
+    "llm_cost_usd": 0.000659
+  },
+  "status": "discard",
+  "description": "# Pure FAISS with direct slicing"
+}
+
+{
+  "exp_id": "exp_371",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:41:54",
+  "prompt_hash": "732b0629",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.769368316978216,
+    "llm_cost_usd": 0.000661
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS search"
+}
+
+{
+  "exp_id": "exp_372",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:42:01",
+  "prompt_hash": "70c824ed",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.898676659911871,
+    "llm_cost_usd": 0.000663
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS top-k search"
+}
+
+{
+  "exp_id": "exp_373",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:42:08",
+  "prompt_hash": "e7441745",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.883489158004522,
+    "llm_cost_usd": 0.000664
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal retrieval"
+}
+
+{
+  "exp_id": "exp_374",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:42:13",
+  "prompt_hash": "007d9398",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.872487490996718,
+    "llm_cost_usd": 0.000664
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_375",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:47:58",
+  "prompt_hash": "3f3d4cbf",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.847674999386072,
+    "llm_cost_usd": 0.000663
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_376",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:48:04",
+  "prompt_hash": "a2c02abf",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.571348341181874,
+    "llm_cost_usd": 0.000666
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_377",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:48:09",
+  "prompt_hash": "3d097130",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.813443334773183,
+    "llm_cost_usd": 0.000667
+  },
+  "status": "discard",
+  "description": "# Pure FAISS minimal search"
+}
+
+{
+  "exp_id": "exp_378",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:48:14",
+  "prompt_hash": "457339fb",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.286770844832063,
+    "llm_cost_usd": 0.000667
+  },
+  "status": "discard",
+  "description": "Minimal FAISS index lookup"
+}
+
+{
+  "exp_id": "exp_379",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:48:20",
+  "prompt_hash": "38ff9e0b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.870234183967113,
+    "llm_cost_usd": 0.000667
+  },
+  "status": "discard",
+  "description": "Direct FAISS index search"
+}
+
+{
+  "exp_id": "exp_380",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:51:44",
+  "prompt_hash": "0434c923",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.393404161557555,
+    "llm_cost_usd": 0.000666
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS search"
+}
+
+{
+  "exp_id": "exp_381",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:51:49",
+  "prompt_hash": "0710f4f4",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.58645250275731,
+    "llm_cost_usd": 0.00067
+  },
+  "status": "discard",
+  "description": "Pure FAISS direct index search."
+}
+
+{
+  "exp_id": "exp_382",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:51:55",
+  "prompt_hash": "33abbb4c",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 12.588577503338456,
+    "llm_cost_usd": 0.000672
+  },
+  "status": "discard",
+  "description": "# Minimal FAISS top-k index lookup"
+}
+
+{
+  "exp_id": "exp_383",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:52:02",
+  "prompt_hash": "33a2a1fb",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 11.771230846643448,
+    "llm_cost_usd": 0.000672
+  },
+  "status": "discard",
+  "description": "# Minimal pure FAISS lookup"
+}
+
+{
+  "exp_id": "exp_384",
+  "objective": "latency",
+  "timestamp": "2026-05-16T23:52:07",
+  "prompt_hash": "5754678a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 10.321915838867426,
+    "llm_cost_usd": 0.000673
+  },
+  "status": "discard",
+  "description": "# Optimized direct FAISS index search"
+}
+
+{
+  "exp_id": "exp_385",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:17:36",
+  "prompt_hash": "b45d26b0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # 1. Broad retrieval with BM25\n    bm25_scores = np.array(bm25.get_scores(query_tokens))\n    # Pick top 200 via BM25\n    bm25_indices = np.argsort(bm25_scores)[-200:]\n    \n    # 2. Refine with FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    # Identify candidates that performed well in both\n    candidates = df.iloc[bm25_indices].copy()\n    \n    # Normalize BM25 and negative FAISS to combine\n    bm25_norm = (bm25_scores[bm25_indices] - np.min(bm25_scores[bm25_indices])) / (np.ptp(bm25_scores[bm25_indices]) + 1e-9)\n    \n    # Align FAISS dists to our specific candidates\n    faiss_scores = np.zeros(200)\n    for i, idx in enumerate(idxs[0]):\n        if idx in bm25_indices:\n            mask = np.where(bm25_indices == idx)[0][0]\n            faiss_scores[mask] = -dists[0][i]\n            \n    # Combine scores\n    candidates['score'] = bm25_norm + faiss_scores\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 19.66770668514073,
+    "llm_cost_usd": 0.00082
+  },
+  "status": "discard",
+  "description": "Use BM25 to score the entire dataset first, then refine the top 200 candidates using FAISS L2 distance."
+}
+
+{
+  "exp_id": "exp_386",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:17:41",
+  "prompt_hash": "e86f48f1",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    # Retrieve a larger pool to allow for re-ranking\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate FAISS score (inverse distance)\n    faiss_score = 1.0 / (1.0 + dists[0])\n    \n    # Simple genre matching: does the query contain a genre string?\n    # Normalize genres to lowercase for matching\n    query_lower = query.lower()\n    genre_boost = candidates['genres'].apply(\n        lambda x: 1.2 if any(g.strip().lower() in query_lower for g in str(x).split(',')) else 1.0\n    )\n    \n    # Combine normalized FAISS distance with genre boost\n    candidates['score'] = faiss_score * genre_boost\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 6.376866661012173,
+    "llm_cost_usd": 0.000769
+  },
+  "status": "discard",
+  "description": "Re-rank using a combined score of FAISS distance and a genre-match boost from the query string"
+}
+
+{
+  "exp_id": "exp_387",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:17:51",
+  "prompt_hash": "b6ce0bc9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Get top 500 candidates via BM25 for a broad recall net\n    top_bm25_indices = np.argsort(bm25_scores)[-500:][::-1]\n    \n    # Retrieve semantic vectors for these candidates\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Re-rank top BM25 candidates using semantic distance\n    # To use FAISS, we would need the index to support arbitrary subsets, \n    # but we can simulate the ranking by calculating dot products directly \n    # or just trust the BM25 order if semantic distance is high.\n    # Given the constraints, let's use the index to perform the search but \n    # bias the result by the BM25 relevance score.\n    \n    dists, idxs = index.search(query_vec, 100)\n    \n    # Combine BM25 normalized scores and FAISS distance for the top 100\n    results = df.iloc[idxs[0]].copy()\n    results['dist'] = dists[0]\n    \n    # Normalize BM25 scores for these indices\n    relevant_bm25 = bm25_scores[idxs[0]]\n    norm_bm25 = (relevant_bm25 - relevant_bm25.min()) / (relevant_bm25.max() - relevant_bm25.min() + 1e-9)\n    norm_dist = 1.0 / (1.0 + results['dist'])\n    \n    # Fusion\n    results['score'] = 0.4 * norm_bm25 + 0.6 * norm_dist\n    \n    return results.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.28,
+    "latency_ms": 19.88177332095802,
+    "llm_cost_usd": 0.000849
+  },
+  "status": "discard",
+  "description": "use a two-stage approach with BM25 for retrieval and FAISS for final re-ranking"
+}
+
+{
+  "exp_id": "exp_388",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:17:54",
+  "prompt_hash": "d9893f0e",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Initial retrieval: Get larger pool\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    # Extract candidates\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Pseudo-relevance feedback: Average embeddings of top 5\n    top_texts = candidates['overview'].iloc[:5].fillna(\"\").values\n    if len(top_texts) > 0:\n        feedback_vec = model.encode(top_texts).mean(axis=0)\n        refined_vec = (query_vec[0] + 0.3 * feedback_vec).astype(\"float32\")\n        # Re-score candidates using refined vector\n        candidate_embeddings = model.encode(candidates['overview'].fillna(\"\").tolist()).astype(\"float32\")\n        scores = np.dot(candidate_embeddings, refined_vec)\n    else:\n        scores = -dists[0]\n        \n    candidates['score'] = scores\n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": 0.0,
+    "llm_cost_usd": 0.000782
+  },
+  "status": "crash",
+  "description": "Query expansion using local pseudo-relevance feedback to re-rank FAISS results"
+}
+
+{
+  "exp_id": "exp_389",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:26:59",
+  "prompt_hash": "bbf20892",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Prepare expanded text for embedding: prioritize title by repetition\n    full_text = (df['title'] + \" \" + df['title'] + \" \" + df['overview']).tolist()\n    \n    # Generate query vector\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # 1. Retrieve candidates via FAISS (larger pool)\n    dists, idxs = index.search(query_vec, 500)\n    \n    # 2. Normalize and compute scores\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # FAISS distance (lower is better, convert to score: -L2)\n    faiss_scores = -dists[0]\n    faiss_scores = (faiss_scores - np.mean(faiss_scores)) / (np.std(faiss_scores) + 1e-9)\n    \n    # BM25 score\n    bm25_scores = bm25.get_scores(query.lower().split())[idxs[0]]\n    bm25_scores = (bm25_scores - np.mean(bm25_scores)) / (np.std(bm25_scores) + 1e-9)\n    \n    # Combined score with popularity bias\n    popularity = np.log1p(candidates['vote_count'])\n    popularity = (popularity - np.mean(popularity)) / (np.std(popularity) + 1e-9)\n    \n    candidates['score'] = (0.6 * faiss_scores) + (0.3 * bm25_scores) + (0.1 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.33,
+    "latency_ms": 25.619453340768814,
+    "llm_cost_usd": 0.000841
+  },
+  "status": "discard",
+  "description": "Multi-field expansion: concatenate title and overview for embedding, and combine with BM25 via normalized score fusion"
+}
+
+{
+  "exp_id": "exp_390",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:27:08",
+  "prompt_hash": "4f107e1b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve candidates using BM25\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    # Retrieve candidates using FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Map faiss scores to indices\n    faiss_scores = np.zeros(len(df))\n    faiss_scores[idxs[0]] = 1.0 / (1.0 + dists[0])\n    \n    # Normalize scores\n    bm25_scores = (bm25_scores - np.min(bm25_scores)) / (np.max(bm25_scores) - np.min(bm25_scores) + 1e-6)\n    faiss_scores = (faiss_scores - np.min(faiss_scores)) / (np.max(faiss_scores) - np.min(faiss_scores) + 1e-6)\n    \n    # Combine scores with popularity weight\n    pop_weight = np.log1p(df['vote_count'].fillna(0))\n    pop_weight = (pop_weight - pop_weight.min()) / (pop_weight.max() - pop_weight.min() + 1e-6)\n    \n    final_scores = (0.4 * bm25_scores) + (0.4 * faiss_scores) + (0.2 * pop_weight)\n    \n    top_indices = np.argsort(final_scores)[::-1][:top_k]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.46,
+    "latency_ms": 20.454646656289697,
+    "llm_cost_usd": 0.00084
+  },
+  "status": "discard",
+  "description": "Hybrid retrieval using BM25 and FAISS with score-based late fusion"
+}
+
+{
+  "exp_id": "exp_391",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:27:18",
+  "prompt_hash": "5cb18655",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve candidates from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    # Retrieve scores from BM25\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    # Initialize dictionary to collect ranks\n    rank_map = {}\n    \n    # FAISS rank (distance to rank)\n    for r, idx in enumerate(idxs[0]):\n        rank_map[idx] = rank_map.get(idx, 0) + 1.0 / (60.0 + r)\n        \n    # BM25 rank\n    bm25_order = np.argsort(bm25_scores)[::-1][:200]\n    for r, idx in enumerate(bm25_order):\n        rank_map[idx] = rank_map.get(idx, 0) + 1.0 / (60.0 + r)\n        \n    # Sort by RRF score\n    sorted_indices = sorted(rank_map.items(), key=lambda x: x[1], reverse=True)\n    top_indices = [x[0] for x in sorted_indices[:top_k]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 20.05230249837041,
+    "llm_cost_usd": 0.000816
+  },
+  "status": "discard",
+  "description": "Hybrid search using log-normalized BM25 scores and FAISS L2 distance via reciprocal rank fusion to balance semantic and keyword relevance."
+}
+
+{
+  "exp_id": "exp_392",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:27:23",
+  "prompt_hash": "fba6a0e5",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Search a larger pool to capture more candidates\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 500)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate base semantic score (inverse of L2 distance)\n    # Adding 1e-6 to avoid division by zero\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # Calculate genre overlap: check if query terms appear in the genres column\n    query_terms = [t.lower() for t in query.split()]\n    genre_bonus = candidates['genres'].apply(\n        lambda g: sum(1 for t in query_terms if t in g.lower())\n    )\n    \n    # Popularity boost: normalized vote count\n    pop = np.log1p(candidates['vote_count'])\n    pop_norm = pop / (pop.max() + 1e-6)\n    \n    # Combined score\n    # We heavily weight semantic_score but give subtle boosts for genres and popularity\n    candidates['score'] = semantic_score + (0.2 * genre_bonus) + (0.1 * pop_norm)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.39,
+    "latency_ms": 6.146828318014741,
+    "llm_cost_usd": 0.000819
+  },
+  "status": "discard",
+  "description": "Hybrid retrieval using a larger FAISS candidate pool followed by genre-aware reranking and popularity adjustment"
+}
+
+{
+  "exp_id": "exp_393",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:27:32",
+  "prompt_hash": "3d1d3cdf",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve wider pool from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate BM25 scores for the candidate pool\n    # BM25 is already imported/instantiated, using the text field for content relevance\n    tokenized_query = query.lower().split()\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    # Extract scores for candidate indices\n    pool_bm25 = bm25_scores[idxs[0]]\n    \n    # Normalize FAISS distance: 1.0 / (1.0 + dist)\n    # Higher similarity (lower dist) -> higher score\n    faiss_scores = 1.0 / (1.0 + dists[0])\n    \n    # Min-max normalization for fusion\n    faiss_norm = (faiss_scores - np.min(faiss_scores)) / (np.max(faiss_scores) - np.min(faiss_scores) + 1e-9)\n    bm25_norm = (pool_bm25 - np.min(pool_bm25)) / (np.max(pool_bm25) - np.min(pool_bm25) + 1e-9)\n    \n    # Hybrid score\n    candidates['score'] = (0.7 * faiss_norm) + (0.3 * bm25_norm)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 20.26483416557312,
+    "llm_cost_usd": 0.000855
+  },
+  "status": "discard",
+  "description": "Hybrid retrieval using FAISS for top-K extraction and BM25 on full text for secondary reranking of the top pool"
+}
+
+{
+  "exp_id": "exp_394",
+  "objective": "latency",
+  "timestamp": "2026-05-17T00:28:58",
+  "prompt_hash": "38847c06",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 5.242900000885129,
+    "llm_cost_usd": 0.000712
+  },
+  "status": "discard",
+  "description": "direct FAISS lookup with minimal index overhead"
+}
+
+{
+  "exp_id": "exp_395",
+  "objective": "latency",
+  "timestamp": "2026-05-17T00:29:01",
+  "prompt_hash": "1d361415",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 5.7039266638457775,
+    "llm_cost_usd": 0.000718
+  },
+  "status": "discard",
+  "description": "Minimalist direct FAISS index search to minimize latency"
+}
+
+{
+  "exp_id": "exp_396",
+  "objective": "latency",
+  "timestamp": "2026-05-17T00:29:05",
+  "prompt_hash": "e3d1adc6",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    \n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 6.335594998672605,
+    "llm_cost_usd": 0.00072
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search with reduced candidate pool size to minimize latency."
+}
+
+{
+  "exp_id": "exp_397",
+  "objective": "latency",
+  "timestamp": "2026-05-17T00:29:08",
+  "prompt_hash": "73a1bf0c",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 5.581367500126362,
+    "llm_cost_usd": 0.000718
+  },
+  "status": "discard",
+  "description": "Minimalist FAISS retrieval with direct indexing"
+}
+
+{
+  "exp_id": "exp_398",
+  "objective": "latency",
+  "timestamp": "2026-05-17T00:29:12",
+  "prompt_hash": "2760a51f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Using a slightly larger candidate pool to ensure enough diversity for sorting, \n    # then directly returning the result.\n    _, idxs = index.search(query_vec, top_k)\n    \n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 5.769483344629407,
+    "llm_cost_usd": 0.000731
+  },
+  "status": "discard",
+  "description": "Pure FAISS minimal search with optimized candidate pool and direct indexing"
+}
+
+{
+  "exp_id": "exp_399",
+  "objective": "cost",
+  "timestamp": "2026-05-17T00:29:43",
+  "prompt_hash": "faebad4a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 8.797508338466287,
+    "llm_cost_usd": 0.000721
+  },
+  "status": "discard",
+  "description": "Minimalist FAISS search with early exit on top_k results."
+}
+
+{
+  "exp_id": "exp_400",
+  "objective": "cost",
+  "timestamp": "2026-05-17T00:29:48",
+  "prompt_hash": "20a3b65f",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 9.144017500802875,
+    "llm_cost_usd": 0.000718
+  },
+  "status": "discard",
+  "description": "minimalist pure FAISS search"
+}
+
+{
+  "exp_id": "exp_401",
+  "objective": "cost",
+  "timestamp": "2026-05-17T00:29:52",
+  "prompt_hash": "b6c20a6b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 6.871079178526998,
+    "llm_cost_usd": 0.00072
+  },
+  "status": "discard",
+  "description": "minimalist pure FAISS search to minimize latency and cost"
+}
+
+{
+  "exp_id": "exp_402",
+  "objective": "cost",
+  "timestamp": "2026-05-17T00:29:56",
+  "prompt_hash": "686fbedd",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    _, idxs = index.search(query_vec, top_k)\n    return df.iloc[idxs[0]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 6.276302505284548,
+    "llm_cost_usd": 0.00072
+  },
+  "status": "discard",
+  "description": "Minimal pure FAISS search to minimize latency and token cost"
+}
+
+{
+  "exp_id": "exp_403",
+  "objective": "cost",
+  "timestamp": "2026-05-17T00:30:00",
+  "prompt_hash": "5e09c6b8",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 50)\n    \n    candidates = df.iloc[idxs[0]].copy()\n    candidates['score'] = 1.0 / (1.0 + dists[0]) + 0.05 * np.log1p(candidates['vote_count'])\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.46,
+    "latency_ms": 6.6928966622799635,
+    "llm_cost_usd": 0.000748
+  },
+  "status": "discard",
+  "description": "simple FAISS with vote_count log-boost"
+}
+
+{
+  "exp_id": "exp_404",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:37:15",
+  "prompt_hash": "15719c71",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Stage 1: Broad retrieval using BM25 to get a larger candidate pool\n    bm25_scores = bm25.get_scores(query.lower().split())\n    # Retrieve top 500 candidates based on keyword relevance\n    bm25_indices = np.argsort(bm25_scores)[-500:][::-1]\n    \n    # Stage 2: Re-rank using FAISS semantic embeddings on the BM25 pool\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Get embeddings for candidate pool\n    # Note: Using index search on all embeddings is not directly supported via index.search, \n    # but we can filter the dataframe and compute similarity if needed.\n    # To stay performant, we perform a vector search on the whole index \n    # but boost those present in the BM25 pool.\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Extract BM25 scores for the top indices from FAISS to create hybrid ranks\n    # Simple strategy: boost FAISS ranks if they appeared in BM25 top 500\n    candidates = df.iloc[idxs[0]].copy()\n    bm25_hits = set(bm25_indices)\n    \n    # Calculate scores: negative L2 distance (higher is better) + 20% bonus for BM25 match\n    base_scores = -dists[0]\n    bonus = np.array([0.2 if i in bm25_hits else 0.0 for i in idxs[0]])\n    candidates['score'] = base_scores + bonus\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.3,
+    "latency_ms": 20.340003315359354,
+    "llm_cost_usd": 0.000862
+  },
+  "status": "discard",
+  "description": "Use BM25 for broad recall retrieval and FAISS for semantic re-ranking"
+}
+
+{
+  "exp_id": "exp_405",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:37:25",
+  "prompt_hash": "816bce4d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. Retrieve candidates via FAISS (semantic)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 500)\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # 2. Calculate scores\n    # Semantic score: invert L2 distance\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # Keyword score: BM25 on the full text\n    bm25_scores = bm25.get_scores(query.lower().split())\n    # Retrieve BM25 scores for the indexed candidates\n    keyword_score = bm25_scores[idxs[0]]\n    \n    # Popularity boost: log-scale vote_count\n    pop_boost = np.log1p(candidates['vote_count']) / np.log1p(df['vote_count'].max())\n    \n    # 3. Combine scores\n    # Use robust scaling approach: multiply semantic and keyword signals\n    # Plus popularity to favor high-quality, relevant items\n    candidates['score'] = (semantic_score * 0.6) + (keyword_score * 0.4) + (pop_boost * 0.1)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.26,
+    "latency_ms": 21.875315001234412,
+    "llm_cost_usd": 0.000838
+  },
+  "status": "discard",
+  "description": "Hybrid retrieval using BM25 with a title-boost factor and FAISS for semantic re-ranking with popularity-based score adjustment"
+}
+
+{
+  "exp_id": "exp_406",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:37:35",
+  "prompt_hash": "27005bc5",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve candidates from FAISS\n    dists, idxs = index.search(query_vec, 500)\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # BM25 scores on overview\n    bm25_scores = bm25.get_scores(query.lower().split())\n    candidates['bm25_score'] = bm25_scores[idxs[0]]\n    \n    # Title-boosted BM25: give extra points if query tokens are in title\n    title_boost = candidates['title'].str.lower().apply(lambda x: sum([1 for q in query.lower().split() if q in x]))\n    \n    # Normalize FAISS L2 to [0, 1]\n    faiss_score = 1.0 / (1.0 + dists[0])\n    \n    # Popularity and quality boost\n    pop = np.log1p(candidates['vote_count'])\n    rating = candidates['vote_average']\n    \n    # Combined score\n    candidates['score'] = (\n        0.4 * faiss_score + \n        0.4 * (candidates['bm25_score'] / (candidates['bm25_score'].max() + 1e-9)) +\n        0.1 * (title_boost / (title_boost.max() + 1e-9)) +\n        0.1 * (pop / (pop.max() + 1e-9) * rating / 10.0)\n    )\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.29,
+    "latency_ms": 21.30165415816009,
+    "llm_cost_usd": 0.000872
+  },
+  "status": "discard",
+  "description": "Hybrid retrieval using BM25 with a title-boost factor and FAISS for semantic re-ranking with popularity-based score adjustment"
+}
+
+{
+  "exp_id": "exp_407",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:37:44",
+  "prompt_hash": "95ce5e81",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Get semantic scores from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    # Get keyword scores from BM25\n    bm25_scores = bm25.get_scores(query.lower().split())\n    \n    # Candidate pool\n    candidates = df.iloc[idxs[0]].copy()\n    \n    # Calculate scores\n    # 1. Semantic similarity (inverse L2)\n    semantic_score = 1.0 / (1.0 + dists[0])\n    \n    # 2. Keyword relevance (BM25)\n    keyword_score = bm25_scores[idxs[0]]\n    \n    # 3. Popularity boost\n    pop_score = np.log1p(candidates['vote_count']) / np.log1p(df['vote_count'].max())\n    \n    # Combine using a weighted sum\n    # Normalize semantic score to 0-1\n    norm_semantic = (semantic_score - semantic_score.min()) / (semantic_score.max() - semantic_score.min() + 1e-9)\n    # Normalize keyword score to 0-1\n    norm_keyword = (keyword_score - keyword_score.min()) / (keyword_score.max() - keyword_score.min() + 1e-9)\n    \n    candidates['score'] = (0.5 * norm_semantic) + (0.4 * norm_keyword) + (0.1 * pop_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.33,
+    "latency_ms": 20.535989180207253,
+    "llm_cost_usd": 0.000871
+  },
+  "status": "discard",
+  "description": "hybrid search with BM25 title word match boost and FAISS distance refinement"
+}
+
+{
+  "exp_id": "exp_408",
+  "objective": "recall",
+  "timestamp": "2026-05-17T00:37:54",
+  "prompt_hash": "1489b0e0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    faiss_scores = {idx: 1.0 / (1.0 + dist) for dist, idx in zip(dists[0], idxs[0]) if idx != -1}\n    \n    # Retrieve from BM25\n    bm25_scores_raw = bm25.get_scores(query.lower().split())\n    \n    # Compute RRF\n    rrf_scores = {}\n    # Combine unique candidates\n    all_indices = set(faiss_scores.keys()) | set(np.argsort(bm25_scores_raw)[-200:])\n    \n    # Get ranks\n    faiss_sorted = sorted(faiss_scores.items(), key=lambda x: x[1], reverse=True)\n    bm25_sorted = sorted([(i, bm25_scores_raw[i]) for i in all_indices], key=lambda x: x[1], reverse=True)\n    \n    faiss_ranks = {idx: r for r, (idx, _) in enumerate(faiss_sorted)}\n    bm25_ranks = {idx: r for r, (idx, _) in enumerate(bm25_sorted)}\n    \n    for idx in all_indices:\n        score = 0.0\n        if idx in faiss_ranks:\n            score += 1.0 / (60.0 + faiss_ranks[idx])\n        if idx in bm25_ranks:\n            score += 1.0 / (60.0 + bm25_ranks[idx])\n        rrf_scores[idx] = score\n        \n    results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]\n    result_df = df.iloc[[r[0] for r in results]].copy()\n    \n    return result_df.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.27,
+    "latency_ms": 19.680850841104984,
+    "llm_cost_usd": 0.000906
+  },
+  "status": "discard",
+  "description": "RRF of BM25 and FAISS with corrected score normalization"
+}
+

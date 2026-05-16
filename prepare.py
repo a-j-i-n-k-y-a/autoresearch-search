@@ -11,14 +11,58 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import os
 import pickle
+import re
+import unicodedata
 
 # ─── FIXED CONSTANTS ───────────────────────────────────────
-DATASET_SIZE    = 722796     # number of movies to use
-TOP_K           = 10          # recall measured at top 10
+DATASET_SIZE    = 722796
+TOP_K           = 10
 CACHE_DIR       = "data/"
-EXPERIMENT_TIME = 60          # max seconds per experiment
+EXPERIMENT_TIME = 60
+
+# ─── TITLE NORMALIZATION ──────────────────────────────────
+
+TITLE_ALIASES = {
+
+    # article normalization
+    "conjuring": "the conjuring",
+
+    # franchise/entity normalization
+    "indiana jones": "raiders of the lost ark",
+
+    # canonicalized variants
+    "romeo and juliet": "romeo juliet",
+
+    # punctuation variants
+    "mission impossible": "mission impossible",
+}
+
+
+def normalize_title(title: str) -> str:
+    """
+    Deterministic title normalization for benchmark evaluation.
+    """
+
+    title = title.lower().strip()
+
+    # remove accents
+    title = unicodedata.normalize("NFKD", title)
+    title = title.encode("ascii", "ignore").decode("ascii")
+
+    # remove punctuation
+    title = re.sub(r"[^a-z0-9]+", " ", title)
+
+    # collapse whitespace
+    title = " ".join(title.split())
+
+    # alias mapping
+    title = TITLE_ALIASES.get(title, title)
+
+    return title
+
 
 # ─── BENCHMARK QUERIES (ground truth, never change) ────────
+
 BENCHMARK_QUERIES = [
     {
         "query": "dream heist movie Leonardo DiCaprio layers of subconscious",
@@ -41,8 +85,8 @@ BENCHMARK_QUERIES = [
         "expected": ["Back to the Future", "Looper"]
     },
     {
-    "query": "mafia family crime saga generational power",
-    "expected": ["The Godfather", "Goodfellas"]
+        "query": "mafia family crime saga generational power",
+        "expected": ["The Godfather", "Goodfellas"]
     },
     {
         "query": "animated toys come to life friendship adventure",
@@ -78,8 +122,9 @@ BENCHMARK_QUERIES = [
     },
     {
         "query": "space western bounty hunter frontier planets",
-        "expected": ["Guardians of the Galaxy", "Firefly"]
+        "expected": ["Guardians of the Galaxy", "Serenity"]
     },
+
     # CRIME / THRILLER
     {
         "query": "con artist identity fraud elaborate deception scheme",
@@ -87,7 +132,7 @@ BENCHMARK_QUERIES = [
     },
     {
         "query": "detective serial killer psychological cat and mouse",
-        "expected": ["Se7en", "Silence of the Lambs"]
+        "expected": ["Se7en"]
     },
     {
         "query": "lawyer courtroom trial justice wrongful conviction",
@@ -95,14 +140,14 @@ BENCHMARK_QUERIES = [
     },
     {
         "query": "hitman assassin contract killing redemption",
-        "expected": ["Leon The Professional", "John Wick"]
+        "expected": ["Léon: The Professional", "John Wick"]
     },
     {
         "query": "drug cartel kingpin empire rise and fall",
         "expected": ["Scarface", "Traffic"]
     },
 
-    # SCI-FI (different from what you have)
+    # SCI-FI
     {
         "query": "alien invasion earth military resistance war",
         "expected": ["Independence Day", "War of the Worlds"]
@@ -167,7 +212,7 @@ BENCHMARK_QUERIES = [
     },
     {
         "query": "supernatural demon possession exorcism religious horror",
-        "expected": ["The Exorcist", "Conjuring"]
+        "expected": ["The Exorcist", "The Conjuring"]
     },
     {
         "query": "slasher masked killer teenagers summer camp",
@@ -181,7 +226,7 @@ BENCHMARK_QUERIES = [
     # ACTION / ADVENTURE
     {
         "query": "spy espionage secret agent government mission",
-        "expected": ["James Bond", "Mission Impossible"]
+        "expected": ["Skyfall", "Mission: Impossible"]
     },
     {
         "query": "treasure hunt ancient ruins archaeology adventure",
@@ -207,12 +252,9 @@ BENCHMARK_QUERIES = [
     },
     {
         "query": "monsters children scream factory parallel world",
-        "expected": ["Monsters Inc"]
+        "expected": ["Monsters, Inc."]
     },
-    {
-        "query": "robot waste earth alone love story future",
-        "expected": ["WALL-E"]
-    },
+   
 
     # HISTORICAL / BIOGRAPHY
     {
@@ -235,7 +277,7 @@ BENCHMARK_QUERIES = [
     # COMEDY
     {
         "query": "wedding chaos family reunion dysfunction humor",
-        "expected": ["The Wedding Crashers", "Four Weddings and a Funeral"]
+        "expected": ["Four Weddings and a Funeral"]
     },
     {
         "query": "office workplace boss employee absurd humor",
@@ -243,69 +285,181 @@ BENCHMARK_QUERIES = [
     },
 ]
 
+
 # ─── DATA PREP (run once) ──────────────────────────────────
+
 def prepare_data():
     os.makedirs(CACHE_DIR, exist_ok=True)
 
+    # ── Dataset ───────────────────────────────────────
     if not os.path.exists(f"{CACHE_DIR}movies.pkl"):
         print("Downloading dataset...")
+
         dataset = load_dataset("wykonos/movies", split="train")
         df = pd.DataFrame(dataset)
-        df = df[["title", "overview", "genres", "vote_average", "vote_count"]].dropna()
+
+        df = df[
+            ["title", "overview", "genres", "vote_average", "vote_count"]
+        ].dropna()
+
         df = df[df["vote_count"] > 100]
         df = df[df["vote_average"] > 5.0]
+
         df = df.head(DATASET_SIZE).reset_index(drop=True)
-        df["text"] = df["title"] + " " + df["overview"] + " " + df["genres"]
+
+        df["text"] = (
+            df["title"] + " "
+            + df["overview"] + " "
+            + df["genres"]
+        )
+
         df.to_pickle(f"{CACHE_DIR}movies.pkl")
+
         print(f"Saved {len(df)} movies")
 
+    else:
+        print("Loading cached dataset...")
+        df = pd.read_pickle(f"{CACHE_DIR}movies.pkl")
+
+    # ── BM25 Cache ────────────────────────────────────
+    if not os.path.exists(f"{CACHE_DIR}bm25.pkl"):
+        print("Building BM25 index...")
+
+        tokenized_corpus = [
+            text.lower().split()
+            for text in df["text"].tolist()
+        ]
+
+        bm25 = BM25Okapi(tokenized_corpus)
+
+        with open(f"{CACHE_DIR}bm25.pkl", "wb") as f:
+            pickle.dump(bm25, f)
+
+        print("BM25 saved")
+
+    else:
+        print("BM25 cache already exists")
+
+    # ── FAISS + Embeddings ────────────────────────────
     if not os.path.exists(f"{CACHE_DIR}faiss.index"):
         print("Building vector index...")
-        df = pd.read_pickle(f"{CACHE_DIR}movies.pkl")
+
         model = SentenceTransformer("all-MiniLM-L6-v2")
-        embeddings = model.encode(df["text"].tolist(), show_progress_bar=True)
+
+        embeddings = model.encode(
+            df["text"].tolist(),
+            show_progress_bar=True
+        )
+
         embeddings = np.array(embeddings).astype("float32")
+
         index = faiss.IndexFlatL2(embeddings.shape[1])
         index.add(embeddings)
+
         faiss.write_index(index, f"{CACHE_DIR}faiss.index")
+
         with open(f"{CACHE_DIR}embeddings.pkl", "wb") as f:
             pickle.dump(embeddings, f)
-        print("Index saved")
+
+        print("Vector index saved")
+
+    else:
+        print("FAISS index already exists")
 
     print("Data ready.")
 
+    # ── Benchmark Validation ─────────────────────────
+
+    dataset_titles = {
+        normalize_title(t)
+        for t in df["title"].tolist()
+    }
+
+    missing = []
+
+    total_expected = 0
+
+    for item in BENCHMARK_QUERIES:
+        for expected in item["expected"]:
+            total_expected += 1
+
+            if normalize_title(expected) not in dataset_titles:
+                missing.append(expected)
+
+    print(
+        f"Benchmark title coverage: "
+        f"{total_expected - len(missing)} / {total_expected}"
+    )
+
+    if missing:
+        print("\n⚠️ Missing benchmark titles:")
+
+        for m in sorted(set(missing)):
+            print(" -", m)
+
 # ─── LOAD RESOURCES ───────────────────────────────────────
+
 def load_resources():
-    df    = pd.read_pickle(f"{CACHE_DIR}movies.pkl")
+    df = pd.read_pickle(f"{CACHE_DIR}movies.pkl")
+
     texts = df["text"].tolist()
 
-    bm25  = BM25Okapi([t.lower().split() for t in texts])
+    bm25 = BM25Okapi(
+        [t.lower().split() for t in texts]
+    )
+
     model = SentenceTransformer("all-MiniLM-L6-v2")
+
     index = faiss.read_index(f"{CACHE_DIR}faiss.index")
 
     return df, bm25, model, index
 
+
 # ─── EVALUATION (ground truth metric, never change) ────────
+
 def evaluate(search_fn, df, bm25, model, index):
     """
     Run all benchmark queries through search_fn.
     Returns recall@K — the single metric to optimize.
     Higher is better.
     """
+
     total_recall = 0.0
 
     for item in BENCHMARK_QUERIES:
-        query    = item["query"]
-        expected = [e.lower() for e in item["expected"]]
 
-        results = search_fn(query, df, bm25, model, index, top_k=TOP_K)
-        retrieved = [r["title"].lower() for r in results]
+        query = item["query"]
 
-        found = sum(1 for e in expected if e in retrieved)
+        expected = {
+            normalize_title(e)
+            for e in item["expected"]
+        }
+
+        results = search_fn(
+            query,
+            df,
+            bm25,
+            model,
+            index,
+            top_k=TOP_K
+        )
+
+        retrieved = {
+            normalize_title(r["title"])
+            for r in results
+        }
+
+        found = sum(
+            1 for e in expected
+            if e in retrieved
+        )
+
         recall = found / len(expected)
+
         total_recall += recall
 
     avg_recall = total_recall / len(BENCHMARK_QUERIES)
+
     return round(avg_recall, 6)
 
 

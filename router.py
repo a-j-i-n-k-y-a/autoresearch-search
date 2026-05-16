@@ -19,29 +19,76 @@ import argparse
 import os
 import sys
 
-# ─── LOAD RESOURCES ONCE ────────────────────────────────────
-# Shared across all profiles — one-time cost at startup
+# ─── LAZY RESOURCE CACHE ───────────────────────────────────
+
 from prepare import load_resources
-print("Loading search resources...")
-df, bm25, model, index = load_resources()
-print("Ready.\n")
+
+CACHED_RESOURCES = None
+
+
+def get_resources(verbose=False):
+    """
+    Lazy-load shared search resources only when needed.
+    Prevents expensive import-time side effects.
+    """
+
+    global CACHED_RESOURCES
+
+    if CACHED_RESOURCES is None:
+
+        if verbose:
+            print("Loading search resources...")
+
+        CACHED_RESOURCES = load_resources()
+
+        if verbose:
+            print("Ready.\n")
+
+    return CACHED_RESOURCES
 
 # ─── CONSTRAINT INFERENCE ───────────────────────────────────
 def infer_constraint(query):
     """
-    Infer the best constraint from query characteristics.
-    Used when no explicit constraint is passed.
+    Infer the best routing profile from query characteristics.
     """
-    word_count = len(query.strip().split())
 
-    if word_count <= 2:
-        # Short query — ambiguous, maximize recall
+    q = query.lower().strip()
+
+    word_count = len(q.split())
+
+    # ── Latency-sensitive patterns ──────────────────
+    if (
+        word_count <= 2 or
+        len(q) <= 12
+    ):
+        return "low_latency"
+
+    # ── Cost-sensitive patterns ─────────────────────
+    if any(x in q for x in [
+        "cheap",
+        "fastest",
+        "quick",
+        "simple",
+    ]):
+        return "low_cost"
+
+    # ── High recall semantic queries ────────────────
+    if (
+        word_count >= 6 or
+        any(x in q for x in [
+            "psychological",
+            "unreliable",
+            "consciousness",
+            "dream",
+            "philosophical",
+            "surreal",
+            "mind-bending",
+        ])
+    ):
         return "high_recall"
-    elif word_count >= 6:
-        # Long descriptive query — semantic, maximize recall
-        return "high_recall"
-    else:
-        return "balanced"
+
+    # ── Default balanced profile ────────────────────
+    return "balanced"
 
 # ─── LOAD REGISTRY ──────────────────────────────────────────
 def load_registry():
@@ -130,7 +177,16 @@ def route(query, constraint=None, verbose=True):
 
     # Run search and measure actual latency
     start   = time.time()
-    results = search_module.search(query, df, bm25, model, index, top_k=10)
+    df, bm25, model, index = get_resources(verbose=verbose)
+
+    results = search_module.search(
+        query,
+        df,
+        bm25,
+        model,
+        index,
+        top_k=10
+    )
     elapsed = round((time.time() - start) * 1000, 1)
 
     response = {

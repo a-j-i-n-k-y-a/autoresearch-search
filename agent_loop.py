@@ -1,4 +1,5 @@
 # agent_loop.py
+import statistics
 import ast
 import time
 import sys
@@ -11,6 +12,11 @@ from dotenv import load_dotenv
 import subprocess
 from openai import OpenAI
 from prepare import load_resources, evaluate, BENCHMARK_QUERIES
+import filecmp
+# ─── GLOBAL RESOURCE CACHE ─────────────────────────────
+
+CACHED_RESOURCES = None
+
 
 load_dotenv()
 
@@ -79,41 +85,116 @@ def get_llm_cost(response):
 # ─── OBJECTIVE ──────────────────────────────────────────────
 def is_improvement(new, best, objective):
     """
-    new / best are metric dicts: { recall, latency_ms, llm_cost_usd }
-    Constraints are never collapsed into one number.
+    Multi-objective comparison with explicit constraints.
+
+    Metrics:
+    {
+        "recall": float,
+        "latency_ms": float,
+        "llm_cost_usd": float
+    }
+
+    Philosophy:
+    - Constraints are enforced first
+    - Then optimize the target metric
+    - Never collapse metrics into one score
     """
+
+    # ── Global constraints ─────────────────────────────
+    RECALL_FLOOR = 0.50
+
+    # Prevent catastrophic regressions
+    MAX_RECALL_DROP_RATIO = 0.95
+
+    # Pareto tolerance thresholds
+    MAX_LATENCY_INCREASE = 1.10
+    MAX_COST_INCREASE    = 2.00
+
+    # ── Helper: quality gate ──────────────────────────
+    def recall_ok():
+        if new["recall"] < RECALL_FLOOR:
+            return False
+
+        # Avoid huge recall regressions even above floor
+        if new["recall"] < best["recall"] * MAX_RECALL_DROP_RATIO:
+            return False
+
+        return True
+
+    # ── Recall objective ──────────────────────────────
     if objective == "recall":
         return new["recall"] > best["recall"]
 
+    # ── Latency objective ─────────────────────────────
     elif objective == "latency":
-        return new["latency_ms"] < best["latency_ms"]
+    
 
+        # Speed improvements are meaningless if search quality collapses
+        if not recall_ok():
+            return False
+
+        MIN_LATENCY_IMPROVEMENT = 0.05  # ms
+
+
+        return ( best["latency_ms"] - new["latency_ms"] ) > MIN_LATENCY_IMPROVEMENT
+
+    # ── Cost objective ────────────────────────────────
     elif objective == "cost":
+
+        # Cheaper garbage is still garbage
+        if not recall_ok():
+            return False
+
         return new["llm_cost_usd"] < best["llm_cost_usd"]
 
+    # ── Pareto objective ──────────────────────────────
     elif objective == "pareto":
-        if new["recall"] < best["recall"]:
-            return False
-        if new["latency_ms"] > best["latency_ms"] * 1.10:
-            return False
-        if new["llm_cost_usd"] > best["llm_cost_usd"] * 2.0 and best["llm_cost_usd"] > 0:
-            return False
-        return (
-            new["recall"]     > best["recall"] or
-            new["latency_ms"] < best["latency_ms"]
-        )
 
-    return False
+        MAX_PARETO_RECALL_DROP = 0.02
+
+        # Allow tiny recall tradeoffs for major latency gains
+        if new["recall"] < best["recall"] - MAX_PARETO_RECALL_DROP:
+            return False
+
+        # Latency bounded degradation
+        if new["latency_ms"] > best["latency_ms"] * MAX_LATENCY_INCREASE:
+            return False
+
+        # Cost bounded degradation
+        if (
+            best["llm_cost_usd"] != float("inf") and
+            new["llm_cost_usd"] > best["llm_cost_usd"] * MAX_COST_INCREASE
+        ):
+            return False
+
+        # Must materially improve something
+        return (
+            new["recall"] > best["recall"] or
+            new["latency_ms"] < best["latency_ms"] - 0.5 or
+            new["llm_cost_usd"] < best["llm_cost_usd"]
+        )
+        
 
 def is_baseline(description):
-    """Robust check — catches 'baseline', 'baseline bm25', etc."""
-    return "baseline" in description.lower()
+    """
+    True only for the actual baseline experiment.
+    Avoid accidental substring matches.
+    """
 
+    if not description:
+        return False
+
+    return description.strip().lower() == "baseline"
+    
 def best_from_history(history, objective):
     """Find the best kept experiment from history for the given objective."""
     kept = [
         r for r in history
-        if r["status"] == "keep" and not is_baseline(r["description"])
+        if (
+            r["status"] == "keep"
+            and r.get("objective") == objective
+            and not is_baseline(r["description"])
+        )
     ]
     if not kept:
         return None
@@ -121,27 +202,82 @@ def best_from_history(history, objective):
     if objective == "recall":
         return max(kept, key=lambda r: r["metrics"]["recall"])
     elif objective == "latency":
-        return min(kept, key=lambda r: r["metrics"]["latency_ms"])
+        feasible = [
+            r for r in kept
+            if r["metrics"]["recall"] >= 0.50
+        ]
+        if not feasible:
+            return None
+        return min(feasible, key=lambda r: r["metrics"]["latency_ms"])
     elif objective == "cost":
-        return min(kept, key=lambda r: r["metrics"]["llm_cost_usd"])
+        feasible = [
+            r for r in kept
+            if r["metrics"]["recall"] >= 0.50
+        ]
+        if not feasible:
+            return None
+        return min(feasible, key=lambda r: r["metrics"]["llm_cost_usd"])
+
     elif objective == "pareto":
         return max(kept, key=lambda r: r["metrics"]["recall"])
     return None
 
 # ─── EVAL ───────────────────────────────────────────────────
+
+
 def run_eval():
-    """Run benchmark on current search.py — returns (recall, latency_ms)."""
-    df, bm25, model, index = load_resources()
+    """
+    Run benchmark on current search.py.
+
+    Returns:
+        (recall, latency_ms)
+
+    Latency methodology:
+    - warmup run
+    - repeated trials
+    - median latency
+    """
+
+    global CACHED_RESOURCES
+
+    if CACHED_RESOURCES is None:
+        print("📦 Loading shared resources...")
+        CACHED_RESOURCES = load_resources()
+
+    df, bm25, model, index = CACHED_RESOURCES
 
     if "search" in sys.modules:
         del sys.modules["search"]
+
     import search as search_module
 
-    start   = time.time()
-    recall  = evaluate(search_module.search, df, bm25, model, index)
-    elapsed = (time.time() - start) * 1000 / len(BENCHMARK_QUERIES)
+    # ── Warmup ─────────────────────────────
+    evaluate(search_module.search, df, bm25, model, index)
 
-    return recall, elapsed
+    # ── Recall (single deterministic run) ─
+    recall = evaluate(search_module.search, df, bm25, model, index)
+
+    # ── Latency trials ────────────────────
+    trials = []
+
+    N_TRIALS = 5
+
+    for _ in range(N_TRIALS):
+        start = time.perf_counter()
+
+        evaluate(search_module.search, df, bm25, model, index)
+
+        elapsed = (
+            (time.perf_counter() - start)
+            * 1000
+            / len(BENCHMARK_QUERIES)
+        )
+
+        trials.append(elapsed)
+
+    latency_ms = statistics.median(trials)
+
+    return recall, latency_ms
 
 # ─── FILE / GIT HELPERS ─────────────────────────────────────
 def read_file(path):
@@ -153,17 +289,100 @@ def write_file(path, content):
         f.write(content)
 
 def git_commit(message):
-    subprocess.run(["git", "add", "search.py"])
-    subprocess.run(["git", "commit", "-m", message])
-    result = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True
-    )
-    return result.stdout.strip()
+    """
+    Commit current experiment state.
+
+    Fails loudly if git operations fail.
+    """
+
+    try:
+
+        add_result = subprocess.run(
+            ["git", "add", "."],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", message],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    except FileNotFoundError:
+        raise RuntimeError(
+            "Git is not installed or not available in PATH."
+        )
+
+    except subprocess.CalledProcessError as e:
+
+        raise RuntimeError(
+            "\nGit commit failed.\n\n"
+            f"Command: {' '.join(e.cmd)}\n"
+            f"Return code: {e.returncode}\n\n"
+            f"STDOUT:\n{e.stdout}\n\n"
+            f"STDERR:\n{e.stderr}"
+        )
 
 def git_restore():
-    """Restore search.py to last commit — atomic, keeps git state clean."""
-    subprocess.run(["git", "checkout", "--", "search.py"])
+    """
+    Restore search.py after failed/discarded experiment.
+
+    Failure here is CRITICAL because optimizer state
+    becomes corrupted if rollback does not succeed.
+    """
+
+    try:
+
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.editor=true",
+                "checkout",
+                "--",
+                "search.py"
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+
+    except subprocess.TimeoutExpired:
+
+        raise RuntimeError(
+            "git restore timed out"
+        )
+
+    except FileNotFoundError:
+
+        raise RuntimeError(
+            "Git is not installed or unavailable in PATH."
+        )
+
+    except subprocess.CalledProcessError as e:
+
+        raise RuntimeError(
+            "\nCRITICAL: git restore failed.\n\n"
+            f"Command: {' '.join(e.cmd)}\n"
+            f"Return code: {e.returncode}\n\n"
+            f"STDOUT:\n{e.stdout}\n\n"
+            f"STDERR:\n{e.stderr}"
+        )
+
+
+def files_are_identical(path1, path2):
+    """
+    Byte-level comparison for profile deduplication.
+    """
+    return (
+        os.path.exists(path1)
+        and os.path.exists(path2)
+        and filecmp.cmp(path1, path2, shallow=False)
+    )
 
 # ─── PROFILE AUTO-UPDATE ────────────────────────────────────
 def update_profile(objective, metrics, description):
@@ -185,6 +404,21 @@ def update_profile(objective, metrics, description):
 
     # Copy winning search.py to profile
     profile_path = f"search_profiles/{profile_name}.py"
+    # Prevent exporting duplicate profiles
+    for other_profile in OBJECTIVE_TO_PROFILE.values():
+
+        other_path = f"search_profiles/{other_profile}.py"
+
+        if (
+            other_profile != profile_name
+            and files_are_identical("search.py", other_path)
+        ):
+            print(
+                f"   ⚠️ Profile identical to {other_profile}.py "
+                f"— skipping export"
+            )
+            return
+
     shutil.copy("search.py", profile_path)
     print(f"   📦 Profile updated → {profile_path}")
 
@@ -270,7 +504,7 @@ def regenerate_registry(updated_objective, updated_profile, updated_metrics, upd
         "}",
         "",
         "# Fallback when constraint is unknown or profile file missing",
-        "DEFAULT_PROFILE = \"balanced\"",
+        f"DEFAULT_PROFILE = \"{updated_profile}\"",
         "",
     ]
 
@@ -329,7 +563,7 @@ def save_prompt(prompt):
             f.write(prompt)
     return prompt_hash
 
-def save_experiment(exp_id, prompt, search_py, metrics, status, description):
+def save_experiment(exp_id, objective, prompt, search_py, metrics, status, description):
     """
     Save experiment record to experiments/log.jsonl.
     Pretty-printed, separated by blank lines.
@@ -339,6 +573,7 @@ def save_experiment(exp_id, prompt, search_py, metrics, status, description):
     prompt_hash = save_prompt(prompt) if prompt else "none"
     record = {
         "exp_id":      exp_id,
+        "objective": objective,
         "timestamp":   time.strftime("%Y-%m-%dT%H:%M:%S"),
         "prompt_hash": prompt_hash,
         "search_py":   search_py,
@@ -429,34 +664,72 @@ def format_history_entry(r):
 
 def parse_agent_response(raw):
     """
-    Robustly extract (description, code) from any LLM response format.
-    Handles: bare label, # DESCRIPTION: label, fences, raw code.
+    Parse LLM response into:
+        (description, code)
+
+    Expected format:
+
+        # DESCRIPTION: ...
+        <full python code>
     """
+
     raw = raw.strip()
-    lines = raw.split("\n")
+
+    if not raw:
+        raise ValueError("Empty agent response")
+
+    lines = raw.splitlines()
+
+    # ── Primary strict protocol ─────────────────────
+
+    PREFIX = "# DESCRIPTION:"
+
     first = lines[0].strip()
 
-    is_code_line = (
-        first.startswith("import")
-        or first.startswith("from")
-        or first.startswith("def ")
-        or first.startswith("class ")
-        or first.startswith("```")
-        or first.startswith("#!")
+    if first.startswith(PREFIX):
+
+        description = first[len(PREFIX):].strip()
+
+        code = "\n".join(lines[1:]).strip()
+
+        if not description:
+            raise ValueError("Empty description")
+
+        if not code:
+            raise ValueError("Missing code block")
+
+        return description, code
+
+    # ── Recovery fallback ───────────────────────────
+    # Sometimes model forgets exact prefix but still
+    # produces valid code. Recover gracefully.
+
+    code_start = None
+
+    for i, line in enumerate(lines):
+
+        stripped = line.strip()
+
+        if stripped.startswith((
+            "import ",
+            "from ",
+            "def ",
+            "class ",
+        )):
+            code_start = i
+            break
+
+    if code_start is not None:
+
+        description = "auto-recovered"
+
+        code = "\n".join(lines[code_start:]).strip()
+
+        return description, code
+
+    raise ValueError(
+        "Could not parse agent response"
     )
-
-    if not is_code_line and len(first) < 80:
-        description = first.replace("# DESCRIPTION:", "").strip()
-        raw         = "\n".join(lines[1:]).strip()
-    else:
-        description = "unlabeled experiment"
-
-    lines = raw.split("\n")
-    lines = [l for l in lines if not l.strip().startswith("```")]
-    code  = "\n".join(lines).strip()
-
-    return description, code
-
 # FIX — AST-based code feature extraction.
 # Replaces hardcoded string matching with deterministic AST parsing.
 # Catches anything the agent writes, not just what we anticipated.
@@ -567,8 +840,19 @@ You are an autonomous research agent improving a movie search system.
 {tried_str}
 If your idea is similar to any of the above, pick something structurally different.
 
-## ALREADY IN THE CODE — do not re-add these:
+## EXISTING CODE FEATURES (reference only)
+
+The current implementation already contains:
 {already_str}
+
+Guidelines:
+- Preserve the existing search() function signature.
+- Existing imports may still be required.
+- Do NOT remove imports unless you are certain they are unused.
+- Avoid duplicate imports.
+- Preserve compatibility with the evaluation pipeline.
+- Modify only what is necessary to improve the objective.
+
 
 ## Think structurally different. Ask yourself:
 - Can I remove something and get equal recall? Simpler = better.
@@ -583,9 +867,27 @@ If your idea is similar to any of the above, pick something structurally differe
 - Use int() or np.int64(), NEVER np.int (deprecated)
 - Do NOT import from other project files
 
-# DESCRIPTION: <5 words or less describing the change>
-Return the description line above FIRST, then immediately the raw Python code.
-No markdown fences. No explanation. Just the description comment then the code.
+## OUTPUT FORMAT (STRICT)
+
+The FIRST line of your response MUST be EXACTLY in this format:
+
+# DESCRIPTION: short description here
+
+Example:
+# DESCRIPTION: add genre weighting
+
+Immediately after that line, output the FULL Python file.
+
+Do NOT include:
+- markdown fences
+- explanations
+- prose
+- bullet points
+- comments before DESCRIPTION
+- partial diffs
+
+Your response MUST begin with:
+# DESCRIPTION:
 """
 
     response          = call_api([{"role": "user", "content": prompt}])
@@ -735,6 +1037,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 "description": r["description"],
                 "metrics":     r["metrics"],
                 "status":      r["status"],
+                "objective": r.get("objective"),
             })
         print(f"📚 Loaded {len(history)} past experiments from log")
     else:
@@ -779,13 +1082,17 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             else:
                 print(f"   ⚠️  Seed profile {seed_path} not found — using current search.py")
 
+    print("\n📦 Preloading resources...")
+    global CACHED_RESOURCES
+    CACHED_RESOURCES = load_resources()
+    
     # ── Baseline — measure what's on disk right now ──
     print("\n📊 Running baseline...")
     baseline_recall, baseline_latency = run_eval()
     baseline_metrics = {
-        "recall":       baseline_recall,
-        "latency_ms":   baseline_latency,
-        "llm_cost_usd": 0.0
+    "recall":       baseline_recall,
+    "latency_ms":   baseline_latency,
+    "llm_cost_usd": float("inf")
     }
     print(f"recall@10    : {baseline_recall:.6f}")
     print(f"latency      : {baseline_latency:.1f}ms")
@@ -793,6 +1100,10 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     # ── Resume best_metrics from history or use baseline ──
     if best_prior:
         best_metrics = best_prior["metrics"].copy()
+
+        # Latency is not stable across runs/machines.
+        # Re-anchor latency to current-session baseline.
+        best_metrics["latency_ms"] = baseline_latency
         print(
             f"📈 Resuming from best prior: "
             f"recall={best_metrics['recall']:.3f}  "
@@ -806,12 +1117,13 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     if not past_records:
         commit = git_commit("baseline")
         log_result("exp_000", commit, baseline_metrics, "keep", "baseline")
-        save_experiment("exp_000", "", read_file("search.py"),
+        save_experiment("exp_000", objective,  "", read_file("search.py"),
                         baseline_metrics, "keep", "baseline")
         history.append({
             "description": "baseline",
             "metrics":     baseline_metrics,
-            "status":      "keep"
+            "status":      "keep",
+            "objective":   objective,
         })
 
     # ── Experiment loop ──
@@ -848,25 +1160,87 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         print("Running benchmark...")
         try:
             new_recall, new_latency = run_eval()
+                    
         except Exception as e:
+
             import traceback
+
             crash_reason = traceback.format_exc()
+
+            # ── Automatic crash guidance ─────────────────────
+
+            import_related_errors = (
+                "NameError",
+                "ImportError",
+                "ModuleNotFoundError",
+            )
+
+            if any(err in crash_reason for err in import_related_errors):
+
+                crash_reason += """
+
+        AUTOMATIC GUIDANCE:
+        The previous experiment removed or failed to preserve
+        a required dependency/import.
+
+        Ensure:
+        - all referenced symbols are imported
+        - required imports are preserved
+        - existing dependencies remain available
+        - the search() signature remains unchanged
+        """
+
             print(f"💥 Crash: {e}")
+
+            # ── Safe restore after crash ─────────────────────
+
+            try:
+
+                git_restore()
+
+            except Exception as restore_error:
+
+                print("\n🚨 CRITICAL RESTORE FAILURE")
+                print(str(restore_error))
+
+                raise RuntimeError(
+                    "Experiment recovery failed. "
+                    "Aborting to prevent optimizer corruption."
+                )
 
             crash_metrics = {
                 "recall":       0.0,
-                "latency_ms":   0.0,
-                "llm_cost_usd": llm_cost
+                "latency_ms":   float("inf"),
+                "llm_cost_usd": llm_cost,
             }
+
             history.append({
+                "exp_id":      exp_id,
                 "description": description,
                 "metrics":     crash_metrics,
                 "status":      "crash",
-                "traceback":   crash_reason
+                "traceback":   crash_reason,
+                "objective":   objective,
             })
-            save_experiment(exp_id, prompt, new_code, crash_metrics, "crash", description)
-            git_restore()
-            log_result(exp_id, "crash", crash_metrics, "crash", description)
+
+            save_experiment(
+                exp_id,
+                objective,
+                prompt,
+                new_code,
+                crash_metrics,
+                "crash",
+                description,
+            )
+
+            log_result(
+                exp_id,
+                "crash",
+                crash_metrics,
+                "crash",
+                description,
+            )
+
             continue
 
         new_metrics = {
@@ -882,7 +1256,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         if is_improvement(new_metrics, best_metrics, objective):
             commit = git_commit(f"experiment: {description}")
             log_result(exp_id, commit, new_metrics, "keep", description)
-            save_experiment(exp_id, prompt, new_code, new_metrics, "keep", description)
+            save_experiment(exp_id, objective, prompt, new_code, new_metrics, "keep", description)
             print(f"✅ KEEP — improved on objective '{objective}'")
 
             # ── Auto-update search profile ──
@@ -892,7 +1266,8 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             history.append({
                 "description": description,
                 "metrics":     new_metrics,
-                "status":      "keep"
+                "status":      "keep",
+                "objective":   objective,
             })
 
             # FIX 3 — Write live architecture summary on every KEEP.
@@ -909,19 +1284,26 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         else:
             git_restore()
             log_result(exp_id, "discarded", new_metrics, "discard", description)
-            save_experiment(exp_id, prompt, new_code, new_metrics, "discard", description)
+            save_experiment(exp_id, objective, prompt, new_code, new_metrics, "discard", description)
             print(f"❌ DISCARD — no improvement on '{objective}'")
             history.append({
                 "description": description,
                 "metrics":     new_metrics,
-                "status":      "discard"
+                "status":      "discard",
+                "objective":   objective,
             })
 
     # ── Document final architecture (full LLM-generated version) ──
     document_architecture(best_metrics, baseline_metrics, objective, n_experiments, history)
 
     # ── Summary ──
-    cost_str = f"${best_metrics['llm_cost_usd']:.6f}" if best_metrics["llm_cost_usd"] > 0 else "n/a"
+    cost_value = best_metrics["llm_cost_usd"]
+
+    cost_str = (
+        f"${cost_value:.6f}"
+        if cost_value != float("inf")
+        else "n/a"
+    )
     print(f"\n{'=' * 60}")
     print("FINAL RESULTS")
     print("=" * 60)
