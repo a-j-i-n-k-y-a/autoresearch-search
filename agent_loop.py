@@ -417,6 +417,8 @@ def update_profile(objective, metrics, description):
     # Copy winning search.py to profile
     profile_path = f"search_profiles/{profile_name}.py"
     # Prevent exporting duplicate profiles
+    duplicate_profile = None
+
     for other_profile in OBJECTIVE_TO_PROFILE.values():
 
         other_path = f"search_profiles/{other_profile}.py"
@@ -425,17 +427,30 @@ def update_profile(objective, metrics, description):
             other_profile != profile_name
             and files_are_identical("search.py", other_path)
         ):
-            print(
-                f"   ⚠️ Profile identical to {other_profile}.py "
-                f"— skipping export"
-            )
-            return
+            duplicate_profile = other_profile
+            break
+
+
+    if duplicate_profile:
+
+        print(
+            f"   ⚠️ Profile identical to {duplicate_profile}.py "
+            f"— skipping file copy but updating registry"
+        )
+
+    else:
+
+        shutil.copy("search.py", profile_path)
+
+        print(f"   📦 Profile updated → {profile_path}")
+
+    # Regenerate registry.py from all existing profiles
+    regenerate_registry(objective, profile_name, metrics, description)
+    
     # Save the file
     shutil.copy("search.py", profile_path)
     print(f"   📦 Profile updated → {profile_path}")
 
-    # Regenerate registry.py from all existing profiles
-    regenerate_registry(objective, profile_name, metrics, description)
 
 def regenerate_registry(updated_objective, updated_profile, updated_metrics, updated_description):
     """
@@ -516,7 +531,7 @@ def regenerate_registry(updated_objective, updated_profile, updated_metrics, upd
         "}",
         "",
         "# Fallback when constraint is unknown or profile file missing",
-        f"DEFAULT_PROFILE = \"{updated_profile}\"",
+        f"DEFAULT_PROFILE = 'balanced'",
         "",
     ]
 
@@ -821,7 +836,27 @@ def ask_agent(program_md, search_py, history, objective):
 
     objective_guidance = {
         "recall":  "Maximize recall@10. Latency and cost are secondary.",
-        "latency": "Minimize latency_ms. Recall must stay above 0.5 or the change is useless.",
+        "latency": (
+                    "Reduce latency WITHOUT collapsing retrieval quality.\n\n"
+
+                    "IMPORTANT:\n"
+                    "- Do NOT remove BM25 entirely\n"
+                    "- Do NOT use pure FAISS-only retrieval\n"
+                    "- Do NOT sacrifice recall for speed\n\n"
+
+                    "Prefer REAL latency optimizations such as:\n"
+                    "- reducing rerank candidate pools\n"
+                    "- candidate pruning\n"
+                    "- simplifying weighting formulas\n"
+                    "- avoiding redundant encode() calls\n"
+                    "- reducing dataframe operations\n"
+                    "- caching intermediate computations\n"
+                    "- early stopping\n"
+                    "- lightweight reranking\n"
+                    "- vector prefilter + BM25 rerank\n\n"
+
+                    "Recall must stay above 0.5."
+                ),
         "cost":    "Minimize LLM tokens — write simpler, shorter search.py so the next prompt is cheaper.",
         "pareto":  "Improve recall or reduce latency. Recall must not drop. Latency must not increase more than 10%.",
     }[objective]
@@ -850,12 +885,23 @@ You are an autonomous research agent improving a movie search system.
 
 ## ALREADY TRIED across all runs — do not repeat these:
 {tried_str}
+
+## AVOID FAILED LATENCY COLLAPSES
+
+Do NOT repeat:
+- pure FAISS-only retrieval
+- removing BM25 entirely
+- minimalist vector-only search
+- ultra-small candidate pools that collapse recall
+- retrieval simplification that destroys semantic coverage
+
 If your idea is similar to any of the above, pick something structurally different.
 
 ## EXISTING CODE FEATURES (reference only)
 
 The current implementation already contains:
 {already_str}
+
 
 Guidelines:
 - Preserve the existing search() function signature.
@@ -954,7 +1000,14 @@ def document_architecture(best_metrics, baseline_metrics, objective, n_experimen
     """Generate full LLM-written ARCHITECTURE_<objective>.md at end of run."""
     print("\n📄 Documenting final architecture...")
 
-    search_py = read_file("search.py")
+    profile_name = OBJECTIVE_TO_PROFILE.get(objective)
+    profile_path = f"search_profiles/{profile_name}.py"
+
+    if os.path.exists(profile_path):
+        search_py = read_file(profile_path)
+    else:
+        search_py = read_file("search.py")
+
     kept      = [r for r in history if r["status"] == "keep" and not is_baseline(r["description"])]
     discarded = [r for r in history if r["status"] == "discard"]
     crashed   = [r for r in history if r["status"] == "crash"]
@@ -982,7 +1035,15 @@ See experiments/log.jsonl for full attempt history.
         return
 
     # ── Resolve best experiment's exp_id and prompt_hash ──
-    best_kept        = best_from_history(history, objective)
+    best_kept = next(
+        (
+            r for r in reversed(history)
+            if r["status"] == "keep"
+            and r.get("objective") == objective
+            and not is_baseline(r["description"])
+        ),
+        None
+    )
     best_exp_id      = "unknown"
     best_prompt_hash = "unknown"
     if best_kept:
@@ -1127,7 +1188,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     baseline_metrics = {
     "recall":       baseline_recall,
     "latency_ms":   baseline_latency,
-    "llm_cost_usd": float("inf")
+    "llm_cost_usd": 0.0
     }
     print(f"recall@10    : {baseline_recall:.6f}")
     print(f"latency      : {baseline_latency:.1f}ms")
@@ -1169,10 +1230,12 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
 
         print(f"\n{'=' * 60}")
         print(f"EXPERIMENT {i + 1}/{n_experiments}  [{exp_id}]")
+        _cost_so_far = best_metrics["llm_cost_usd"]
+        _cost_so_far_str = f"${_cost_so_far:.6f}" if _cost_so_far != float("inf") else "n/a"
         print(
             f"Best so far  → recall={best_metrics['recall']:.3f}  "
             f"latency={best_metrics['latency_ms']:.1f}ms  "
-            f"cost=${best_metrics['llm_cost_usd']:.6f}"
+            f"cost={_cost_so_far_str}"
         )
         print("=" * 60)
 
@@ -1295,9 +1358,8 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             print(f"✅ KEEP — improved on objective '{objective}'")
 
             # ── Auto-update search profile ──
-            update_profile(objective, new_metrics, description)
-
             best_metrics = new_metrics.copy()
+            update_profile(objective, best_metrics, description) 
             history.append({
                 "description": description,
                 "metrics":     new_metrics,
@@ -1327,6 +1389,26 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 "status":      "discard",
                 "objective":   objective,
             })
+    # Add this just before document_architecture() at line 1363
+    # ── Sync registry with ACTUAL promoted best ─────────────
+
+    latest_kept = next(
+        (
+            r for r in reversed(history)
+            if r["status"] == "keep"
+            and r.get("objective") == objective
+            and not is_baseline(r["description"])
+        ),
+        None
+    )
+
+    if latest_kept:
+
+        update_profile(
+            objective,
+            latest_kept["metrics"],
+            latest_kept["description"]
+        )
 
     # ── Document final architecture (full LLM-generated version) ──
     document_architecture(best_metrics, baseline_metrics, objective, n_experiments, history)

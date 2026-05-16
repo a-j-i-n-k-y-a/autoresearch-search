@@ -462,3 +462,80 @@ exp_460	discarded	0.170000	6.9	0.001002	discard	Retrieve 1000 candidates via FAI
 exp_461	discarded	0.250000	21.4	0.001040	discard	Use BM25 for broad recall retrieval on full text, then re-rank the top 500 candidates using FAISS semantic scores and a popularity-based boost.
 exp_462	discarded	0.220000	9.6	0.000965	discard	pure FAISS retrieval with a significantly larger candidate pool of 2000 and simple inverse distance scoring for maximum recall
 exp_463	discarded	0.440000	24.9	0.001091	discard	Perform BM25 retrieval on full text to get a large pool, then re-rank with FAISS semantic score and popularity-based weighted scoring.
+exp_464	None	0.580000	21.6	0.001104	keep	BM25 retrieve 1000, rank by semantic similarity and popularity
+exp_465	discarded	0.560000	22.0	0.001067	discard	BM25 retrieval of 2000 candidates followed by FAISS reranking and multiplicative popularity boost
+exp_466	discarded	0.370000	22.1	0.001072	discard	Perform FAISS search on top 2000, then re-rank using a weighted combination of semantic similarity and a popularity-boosted BM25 score.
+exp_467	discarded	0.220000	7.4	0.000970	discard	Pure FAISS retrieval with minimal overhead to minimize latency
+exp_468	discarded	0.220000	6.5	0.000964	discard	Pure FAISS retrieval with minimal candidate pool for latency optimization
+exp_469	discarded	0.220000	6.5	0.000963	discard	minimalist pure FAISS search to minimize latency
+exp_470	discarded	0.220000	6.2	0.000963	discard	Pure FAISS retrieval with minimal overhead for low-latency ranking
+exp_471	discarded	0.220000	5.5	0.000981	discard	pure FAISS search with minimal footprint for latency optimization
+exp_472	discarded	0.220000	7.9	0.000960	discard	Pure FAISS retrieval with minimal overhead for low-latency ranking
+exp_473	discarded	0.220000	9.0	0.000959	discard	direct pure FAISS retrieval with minimal k to minimize latency
+exp_474	discarded	0.220000	7.2	0.000956	discard	minimalist pure FAISS search with early exit on top_k results
+exp_475	discarded	0.220000	7.3	0.000955	discard	minimalist pure FAISS search with direct index lookup
+exp_476	discarded	0.220000	5.9	0.000956	discard	Minimalist pure FAISS index search to maximize latency performance.
+exp_477	discarded	0.240000	20.8	0.001125	discard	Optimized hybrid search with early-exit FAISS and BM25 score blending
+exp_478	discarded	0.240000	22.5	0.001108	discard	Optimized hybrid search using BM25 for retrieval and FAISS for lightweight reranking with popularity boost
+exp_479	crash	0.000000	inf	0.001128	crash	Optimized hybrid search using BM25 to prune to 200 candidates and FAISS for lightweight semantic scoring with a popularity-informed rank boost
+exp_480	discarded	0.280000	20.1	0.001158	discard	Hybrid retrieval using BM25 with a lightweight 500-candidate pool and FAISS reranking to reduce overhead.
+exp_481	discarded	0.310000	21.0	0.001159	discard	Hybrid search using BM25 for top-100 recall and FAISS with vector normalization for high-performance reranking
+exp_482	discarded	0.030000	20.7	0.001098	discard	Hybrid search using BM25 for top-100 recall and FAISS with vector normalization for high-performance reranking
+exp_483	discarded	0.260000	19.9	0.001138	discard	Hybrid search using BM25 for top-200 candidate retrieval and simple FAISS-based L2 scoring for reranking, avoiding unnecessary dataframe operations to reduce latency.
+exp_484	discarded	0.220000	20.7	0.001131	discard	efficient hybrid search using BM25 top-200 retrieval and vectorized index scoring
+exp_485	discarded	0.420000	23.1	0.001146	discard	Hybrid search using BM25 for top-150 candidate retrieval and fast FAISS semantic ranking with pre-normalized popularity boosts.
+exp_486	discarded	0.380000	20.6	0.001141	discard	Reduce candidate pool to 100 for BM25 retrieval and eliminate secondary dataframe operations to minimize latency.
+exp_487	discarded	0.410000	27.8	0.001181	discard	combine BM25 and FAISS via normalized RRF and popularity boost for latency and recall
+exp_488	discarded	0.220000	11.6	0.001082	discard	BM25-only search with title/popularity weighting for speed
+exp_489	discarded	0.350000	19.3	0.001133	discard	Hybrid BM25 and FAISS search with early-exit L2 distance scoring and popularity prioritization
+exp_490	discarded	0.280000	20.8	0.001142	discard	hybrid search with BM25-based candidate pruning and optimized FAISS semantic reranking
+exp_491	discarded	0.220000	19.9	0.001129	discard	Optimized hybrid search with early-exit FAISS and BM25 score blending
+exp_492	discarded	0.490000	20.8	0.001134	discard	Efficient hybrid search using BM25 top-200 retrieval and optimized FAISS semantic ranking with simplified popularity boosting
+exp_493	discarded	0.240000	23.2	0.001173	discard	Hybrid search with streamlined top-100 BM25 retrieval and fast FAISS scoring, removing extra dataframe operations.
+exp_494	discarded	0.400000	23.2	0.001190	discard	Hybrid search using BM25 with title-boost and FAISS reranking on a 150-candidate pool to optimize latency and recall.
+exp_495	discarded	0.360000	20.9	0.001216	discard	Parallelized retrieval with BM25 on text and FAISS on embedding space to reduce index access time
+exp_496	discarded	0.420000	20.4	0.001113	discard	Reduced BM25 candidate pool to 150 with fast FAISS reranking and simplified popularity weight
+exp_497	discarded	0.270000	18.8	0.001099	discard	hybrid search with BM25 title/overview retrieval and RRF reranking
+exp_498	discarded	0.240000	22.4	0.001172	discard	hybrid search with BM25 score scaling and popularity-based rank adjustment
+exp_499	discarded	0.500000	22.3	0.001210	discard	Hybrid search with BM25 title boosting and FAISS-based semantic score fusion
+exp_500	discarded	0.380000	20.2	0.001140	discard	hybrid search with BM25 top-500 retrieval and popularity-boosted FAISS reranking
+exp_501	discarded	0.370000	10.2	0.001145	discard	Retrieve 500 candidates via BM25, sort by BM25, and boost using a normalized sigmoid popularity-rating function to preserve recall while improving ranking precision.
+exp_502	discarded	0.340000	20.0	0.001159	discard	BM25 retrieval of 500 candidates combined with L2 semantic ranking and a logarithmic popularity-rating boost for improved precision.
+exp_503	discarded	0.480000	21.9	0.001175	discard	Use BM25 for top-1000 retrieval and rerank using FAISS with a popularity boost based on vote_average and log-scaled vote_count to optimize recall.
+exp_504	discarded	0.550000	20.5	0.001199	discard	Hybrid search using BM25 with title-boost and FAISS semantic reranking, using vote_count and vote_average for normalized popularity adjustment.
+exp_505	discarded	0.310000	20.4	0.001180	discard	hybrid search with BM25 title/overview retrieval and RRF reranking
+exp_506	discarded	0.270000	21.4	0.001190	discard	hybrid search using BM25 with title-weighting and FAISS semantic search, combined via RRF (k=60)
+exp_507	crash	0.000000	inf	0.001220	crash	Hybrid search with BM25 title-boost and FAISS semantic reranking, incorporating a normalized sigmoid popularity boost on a 500-candidate pool.
+exp_508	discarded	0.350000	20.6	0.001206	discard	Efficient hybrid search using 500-candidate BM25 retrieval and vectorized L2 FAISS scoring with popularity adjustment
+exp_509	discarded	0.250000	21.2	0.001219	discard	Hybrid search using BM25 with a dynamic candidate pool size and popularity-weighted semantic re-ranking.
+exp_510	discarded	0.440000	23.6	0.001283	discard	hybrid search with title-boosted BM25 and fast FAISS semantic reranking
+exp_511	discarded	0.240000	20.5	0.001247	discard	hybrid search using BM25 for retrieval and FAISS for semantic re-ranking with a genre-based bias
+exp_512	discarded	0.310000	21.2	0.001230	discard	Hybrid BM25+FAISS search with a normalized score blending and popularity-weighted re-ranking.
+exp_513	discarded	0.550000	21.9	0.001241	discard	Hybrid search using BM25 with title-boosted scoring and FAISS L2 similarity for reranking with a popularity prior.
+exp_514	discarded	0.220000	22.3	0.001246	discard	Hybrid search using BM25 with title-boosted scoring and FAISS L2 similarity for reranking with a popularity prior.
+exp_515	discarded	0.500000	22.1	0.001239	discard	Hybrid search using BM25 with title-boost and FAISS semantic reranking, using normalized popularity scores on a 500-candidate pool.
+exp_516	discarded	0.560000	21.7	0.001238	discard	hybrid search with BM25 title boosting and FAISS semantic reranking, using log-normalized popularity weights on a 500-candidate pool.
+exp_517	discarded	0.290000	40.2	0.001238	discard	Hybrid BM25/FAISS with RRF using K=60, title-boosted BM25, and sigmoid popularity weighting on a 200-candidate pool.
+exp_518	discarded	0.340000	20.4	0.001238	discard	hybrid search using BM25 for retrieval and FAISS for re-ranking with popularity-weighted scoring
+exp_519	discarded	0.380000	20.5	0.001366	discard	Hybrid search using title-weighted BM25 and FAISS, utilizing RRF with K=60 for score fusion and popularity-informed re-ranking.
+exp_520	discarded	0.430000	20.9	0.001257	discard	Hybrid search using BM25 with title boosting and FAISS semantic L2 ranking with a logarithmic vote-count popularity bias.
+exp_521	discarded	0.610000	29.0	0.001251	discard	hybrid search with BM25 title boosting and FAISS semantic reranking using a calibrated popularity boost
+exp_522	discarded	0.350000	29.0	0.001292	discard	Hybrid BM25 and FAISS search with title-boosted BM25 and genre-aware reranking
+exp_523	discarded	0.270000	21.1	0.001263	discard	hybrid search using BM25 for top-1000 retrieval and semantic reranking with popularity-aware score fusion
+exp_524	discarded	0.370000	21.2	0.001202	discard	Efficient hybrid search using BM25 top-200 retrieval and optimized FAISS semantic ranking with a popularity-informed rank boost
+exp_525	discarded	0.350000	19.7	0.001276	discard	Hybrid search using BM25 with title-weighting and FAISS, integrated via a weighted combination of semantic similarity and popularity
+exp_526	discarded	0.580000	21.8	0.001262	discard	Use BM25 for broad recall and FAISS semantic similarity on a 500-candidate pool, utilizing a genre-match boost and normalized popularity scaling.
+exp_527	discarded	0.190000	21.1	0.001249	discard	Hybrid search using title-weighted BM25 and semantic FAISS with non-linear popularity integration
+exp_528	discarded	0.360000	20.7	0.001257	discard	BM25-based candidate retrieval with genre-overlap scoring and popularity-based weight refinement
+exp_529	discarded	0.340000	21.7	0.001274	discard	Hybrid search using title-weighted BM25 and FAISS with popularity-based score re-ranking.
+exp_530	discarded	0.020000	66.1	0.001282	discard	Hybrid search using BM25 and FAISS with RRF k=60 and popularity-adjusted scoring
+exp_531	discarded	0.500000	20.5	0.001289	discard	BM25-based candidate retrieval with normalized popularity and rating-based score re-ranking
+exp_532	discarded	0.500000	20.7	0.001301	discard	Multi-stage hybrid search with BM25 recall, FAISS re-ranking, and genre/popularity boost
+exp_533	discarded	0.450000	37.7	0.001295	discard	BM25 retrieval followed by FAISS reranking and popularity-adjusted scoring using logarithmic vote count and normalized rating.
+exp_534	discarded	0.350000	20.4	0.001316	discard	Hybrid search using title-weighted BM25 and FAISS vector similarity via normalized score fusion
+exp_535	discarded	0.300000	21.5	0.001282	discard	Hybrid search using BM25 with dynamic weighting and FAISS similarity, optimized with normalized popularity scores to improve ranking precision without increasing latency.
+exp_536	discarded	0.380000	22.6	0.001336	discard	Hybrid search using title-weighted BM25 and FAISS vector similarity, normalized with a popularity prior to boost ranking precision.
+exp_537	discarded	0.320000	35.5	0.001277	discard	Use BM25 for top-100 candidate retrieval and re-rank via FAISS semantic similarity with a boost for movies with high popularity and rating.
+exp_538	discarded	0.350000	22.1	0.001236	discard	Hybrid search using BM25 for top-500 candidate retrieval and FAISS semantic ranking with a popularity-informed rank boost
+exp_539	discarded	0.410000	19.2	0.001257	discard	hybrid retrieval with BM25 score fusion and popularity-informed re-ranking using L2 distance
+exp_540	discarded	0.350000	20.4	0.001320	discard	hybrid search with BM25 score fusion and popularity-informed re-ranking using L2 distance
