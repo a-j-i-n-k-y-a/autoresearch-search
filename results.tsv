@@ -551,3 +551,43 @@ exp_549	discarded	0.240000	34.1	0.001292	discard	Hybrid BM25 and FAISS search wi
 exp_550	discarded	0.210000	19.1	0.001291	discard	Hybrid search using BM25 with title-boost and FAISS reranking, omitting popularity normalization to minimize latency while maintaining recall.
 exp_551	discarded	0.220000	19.8	0.001258	discard	Hybrid search using BM25 with title-weighting and FAISS semantic reranking, optimized to remove redundant dataframe operations and minimize cost.
 exp_552	discarded	0.420000	20.6	0.001304	discard	Use BM25 for retrieval and FAISS for reranking on top 200, incorporating logarithmic popularity boost to improve precision.
+exp_553	discarded	0.260000	20.0	0.001316	discard	Optimize latency by reducing candidate pool to 150 for BM25 retrieval and performing vectorized FAISS scoring without redundant indexing
+exp_554	discarded	0.220000	19.2	0.001274	discard	Optimized hybrid search using BM25 top-100 recall and FAISS semantic ranking with simplified, low-latency score merging.
+exp_555	discarded	0.220000	19.0	0.001289	discard	hybrid BM25 and FAISS search with early-exit FAISS scoring to minimize latency
+exp_556	discarded	0.230000	20.3	0.001309	discard	streamlined hybrid retrieval with BM25 score prioritization and minimal FAISS re-ranking to reduce latency
+exp_557	discarded	0.220000	19.0	0.001316	discard	Hybrid search using BM25 with dynamic score normalization and lightweight FAISS re-ranking to minimize latency
+exp_558	discarded	0.240000	20.6	0.001310	discard	hybrid search using BM25 with fixed candidate pool and vectorized score integration
+exp_559	discarded	0.460000	20.4	0.001295	discard	Optimize retrieval latency by using a smaller BM25 pool and avoiding logarithmic popularity transformations, focusing on direct score integration.
+exp_560	discarded	0.220000	19.1	0.001299	discard	Combine BM25 scores and FAISS distance using a memory-efficient early-exit approach to minimize dataframes and maximize speed.
+exp_561	discarded	0.230000	19.5	0.001304	discard	hybrid search with efficient BM25 retrieval and vectorized FAISS scoring
+exp_562	discarded	0.290000	19.4	0.001286	discard	Optimized hybrid search with BM25 pruning and vectorized FAISS scoring
+exp_563	discarded	0.290000	19.4	0.001315	discard	optimize latency by using fixed-k FAISS search and in-place scoring
+exp_564	discarded	0.210000	21.3	0.001343	discard	optimized hybrid search using BM25 and FAISS with in-place ranking and early-exit logic
+exp_565	discarded	0.260000	19.3	0.001313	discard	use BM25-based candidate filtering and pre-indexed FAISS search with minimal dataframe overhead to reduce latency
+exp_566	discarded	0.260000	19.1	0.001295	discard	Optimize retrieval latency by using a vectorized BM25 candidate lookup and direct FAISS scoring without redundant dataframe copies.
+exp_567	discarded	0.230000	19.7	0.001348	discard	optimize latency by using fixed-pool BM25 retrieval and direct FAISS score merging without extra dataframe filtering
+exp_568	discarded	0.220000	18.9	0.001287	discard	Optimized hybrid search with early-exit FAISS and minimal data operations
+exp_569	discarded	0.220000	19.3	0.001305	discard	Efficient hybrid search using BM25 and FAISS with in-place ranking to avoid heavy dataframe operations
+exp_570	discarded	0.220000	20.0	0.001298	discard	hybrid search with BM25 top-100 retrieval and optimized FAISS semantic reranking
+exp_571	discarded	0.230000	19.3	0.001333	discard	Optimized hybrid search using BM25 and FAISS with minimal dataframe overhead and simplified score scaling
+exp_572	discarded	0.260000	19.1	0.001367	discard	Efficient hybrid search using direct BM25 top-200 filtering followed by FAISS semantic reranking without redundant dataframe copies.
+exp_573	discarded	0.480000	28.3	0.001356	discard	Hybrid search using BM25 with a title-boosted weight and FAISS semantic reranking, integrating popularity via log-scaled vote_count to balance precision and recall.
+exp_574	discarded	0.250000	19.2	0.001341	discard	Boost recall by using a larger FAISS pool and combining BM25 and semantic scores using robust L2 distance normalization.
+exp_575	discarded	0.330000	20.7	0.001424	discard	Combine BM25 on full text and FAISS using a calibrated weighted fusion for better recall
+exp_576	discarded	0.110000	29.3	0.001371	discard	RRF fusion of BM25 and FAISS with title-weighted BM25 for balanced recall
+exp_577	discarded	0.540000	5.6	0.001331	discard	Hybrid search with genre-boosted FAISS embeddings and popularity-prioritized re-ranking
+exp_578	discarded	0.310000	20.5	0.001396	discard	Hybrid search using BM25 with dynamic weight and FAISS distance-based re-ranking with popularity boost
+exp_579	discarded	0.220000	21.5	0.001355	discard	RRF of BM25 and FAISS with title-weighted BM25 boost
+exp_580	discarded	0.330000	24.4	0.001385	discard	Hybrid search using title-weighted BM25 and FAISS with RRF (k=60) and logarithmic popularity boost.
+exp_581	discarded	0.500000	31.2	0.001396	discard	Hybrid search using title-weighted BM25 and FAISS vector similarity with genre-bias scoring
+exp_582	discarded	0.520000	26.0	0.001420	discard	hybrid search using rank-scaled BM25 and FAISS with popularity-based re-ranking
+exp_583	discarded	0.390000	20.0	0.001407	discard	Hybrid search using BM25 and FAISS with a simple inverse-distance and popularity re-ranking on a 500-candidate pool
+exp_584	discarded	0.320000	22.8	0.001380	discard	Hybrid search using title-weighted BM25 and FAISS with RRF (k=60) and logarithmic popularity boost
+exp_585	discarded	0.260000	23.1	0.001443	discard	Hybrid retrieval with BM25 on full text and FAISS on overview, combined with popularity-adjusted RRF for better recall.
+exp_586	discarded	0.370000	20.6	0.001382	discard	RRF of BM25 and FAISS with k=60 and popularity-weighted scores
+exp_587	discarded	0.240000	29.6	0.001436	discard	Hybrid retrieval using BM25 with dynamic title boost and FAISS semantic search, combined using normalized RRF for balanced recall and precision.
+exp_588	discarded	0.260000	20.9	0.001370	discard	Hybrid search with BM25 score scaling and FAISS distance-based re-ranking with popularity boost
+exp_589	discarded	0.320000	20.7	0.001384	discard	Hybrid retrieval using BM25 and FAISS with weighted score fusion and popularity-based re-ranking
+exp_590	discarded	0.380000	22.1	0.001428	discard	Hybrid search using BM25 with title-boost and FAISS reranking, incorporating a normalized sigmoid popularity boost on a 500-candidate pool.
+exp_591	discarded	0.390000	20.4	0.001391	discard	Hybrid search using BM25 and FAISS with score normalization and popularity boost
+exp_592	discarded	0.530000	28.5	0.001386	discard	use BM25-based re-weighting of FAISS results with popularity priors

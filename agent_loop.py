@@ -20,6 +20,7 @@ MAX_RECALL_DROP_RATIO = 0.95
 MAX_LATENCY_INCREASE = 1.10
 MAX_COST_INCREASE = 2.00
 MIN_LATENCY_IMPROVEMENT = 0.05
+MAX_PARETO_RECALL_DROP = 0.02 
 # ─── GLOBAL RESOURCE CACHE ─────────────────────────────
 
 CACHED_RESOURCES = None
@@ -106,14 +107,12 @@ def is_improvement(new, best, objective):
     - Then optimize the target metric
     - Never collapse metrics into one score
     """
-     # ── Global constraints ─────────────────────────────
-
+    # ── Global constraints ─────────────────────────────
     checks = {
         "recall_floor":    new["recall"] >= RECALL_FLOOR,
         "recall_drop":     new["recall"] >= best["recall"] * MAX_RECALL_DROP_RATIO,
         "latency_improve": (best["latency_ms"] - new["latency_ms"]) > MIN_LATENCY_IMPROVEMENT,
     }
-
 
     # ── Helper: quality gate ──────────────────────────
     def recall_ok():
@@ -128,46 +127,44 @@ def is_improvement(new, best, objective):
 
     # ── Recall objective ──────────────────────────────
     if objective == "recall":
-        return new["recall"] > best["recall"]
+        checks["recall_improve"] = new["recall"] > best["recall"]
+        return checks["recall_improve"], checks
 
     # ── Latency objective ─────────────────────────────
     elif objective == "latency":
-        if not recall_ok():
-            return False
-        return ( best["latency_ms"] - new["latency_ms"] ) > MIN_LATENCY_IMPROVEMENT
+        checks["recall_ok"]       = recall_ok()
+        checks["latency_improve"] = (best["latency_ms"] - new["latency_ms"]) > MIN_LATENCY_IMPROVEMENT
+        return checks["recall_ok"] and checks["latency_improve"], checks
 
     # ── Cost objective ────────────────────────────────
     elif objective == "cost":
-        if not recall_ok():
-            return False
-        if new["latency_ms"] > best["latency_ms"] * MAX_LATENCY_INCREASE:
-            return False
-        return new["llm_cost_usd"] < best["llm_cost_usd"]
+        checks["recall_ok"]      = recall_ok()
+        checks["latency_ok"]     = new["latency_ms"] <= best["latency_ms"] * MAX_LATENCY_INCREASE
+        checks["cost_improve"]   = new["llm_cost_usd"] < best["llm_cost_usd"]
+        return checks["recall_ok"] and checks["latency_ok"] and checks["cost_improve"], checks
 
     # ── Pareto objective ──────────────────────────────
     elif objective == "pareto":
-
-        # 1. Recall can drop, but only a tiny bit (max 0.02)
-        if new["recall"] < best["recall"] - MAX_PARETO_RECALL_DROP:
-            return False
-
-        # 2. Latency can increase, but max 10%
-        if new["latency_ms"] > best["latency_ms"] * MAX_LATENCY_INCREASE:
-            return False
-
-        # 3. Cost can increase, but max 2x
-        if (
-            best["llm_cost_usd"] != float("inf") and
-            new["llm_cost_usd"] > best["llm_cost_usd"] * MAX_COST_INCREASE
-        ):
-            return False
-
-        # 4. Must actually improve at least one thing
-        return (
+        checks["recall_drop_ok"]  = new["recall"] >= best["recall"] - MAX_PARETO_RECALL_DROP
+        checks["latency_ok"]      = new["latency_ms"] <= best["latency_ms"] * MAX_LATENCY_INCREASE
+        checks["cost_ok"]         = (
+            best["llm_cost_usd"] == float("inf") or
+            new["llm_cost_usd"] <= best["llm_cost_usd"] * MAX_COST_INCREASE
+        )
+        checks["any_improve"]     = (
             new["recall"] > best["recall"] or
             new["latency_ms"] < best["latency_ms"] - 0.5 or
             new["llm_cost_usd"] < best["llm_cost_usd"]
         )
+        passed = all([
+            checks["recall_drop_ok"],
+            checks["latency_ok"],
+            checks["cost_ok"],
+            checks["any_improve"],
+        ])
+        return passed, checks
+
+    return False, checks
         
 
 def is_baseline(description):
@@ -198,7 +195,7 @@ def best_from_history(history, objective):
     elif objective == "latency":
         feasible = [
             r for r in kept
-            if r["metrics"]["recall"] >= 0.50
+            if r["metrics"]["recall"] >= RECALL_FLOOR
         ]
         if not feasible:
             return None
@@ -206,7 +203,7 @@ def best_from_history(history, objective):
     elif objective == "cost":
         feasible = [
             r for r in kept
-            if r["metrics"]["recall"] >= 0.50
+            if r["metrics"]["recall"] >= RECALL_FLOOR #intentional redundancy
         ]
         if not feasible:
             return None
@@ -392,7 +389,6 @@ def update_profile(objective, metrics, description):
     Copies current search.py to search_profiles/<profile_name>.py
     and regenerates search_profiles/registry.py.
     """
-    RECALL_FLOOR = 0.5
     # figure out which profile to save to
     profile_name = OBJECTIVE_TO_PROFILE.get(objective)
     if not profile_name:
@@ -583,7 +579,7 @@ def save_prompt(prompt):
             f.write(prompt)
     return prompt_hash
 
-def save_experiment(exp_id, objective, prompt, search_py, metrics, status, description):
+def save_experiment(exp_id, objective, prompt, search_py, metrics, status, description, constraint_trace=None):
     """
     Save experiment record to experiments/log.jsonl.
     Pretty-printed, separated by blank lines.
@@ -592,14 +588,15 @@ def save_experiment(exp_id, objective, prompt, search_py, metrics, status, descr
     os.makedirs("experiments", exist_ok=True)
     prompt_hash = save_prompt(prompt) if prompt else "none"
     record = {
-        "exp_id":      exp_id,
-        "objective": objective,
-        "timestamp":   time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "prompt_hash": prompt_hash,
-        "search_py":   search_py,
-        "metrics":     metrics,
-        "status":      status,
-        "description": description,
+        "exp_id":           exp_id,
+        "objective":        objective,
+        "timestamp":        time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "prompt_hash":      prompt_hash,
+        "search_py":        search_py,
+        "metrics":          metrics,
+        "status":           status,
+        "description":      description,
+        "constraint_trace": constraint_trace or {},  # ← add this
     }
     with open("experiments/log.jsonl", "a") as f:
         f.write(json.dumps(record, indent=2) + "\n\n")
@@ -1228,8 +1225,11 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     if not past_records:
         commit = git_commit("baseline")
         log_result("exp_000", commit, baseline_metrics, "keep", "baseline")
-        save_experiment("exp_000", objective,  "", read_file("search.py"),
-                        baseline_metrics, "keep", "baseline")
+        save_experiment(
+            "exp_000", objective, "", read_file("search.py"),
+            baseline_metrics, "keep", "baseline",
+            constraint_trace={}  # no gate was applied, explicitly empty
+        )
         history.append({
             "description": "baseline",
             "metrics":     baseline_metrics,
@@ -1344,6 +1344,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 crash_metrics,
                 "crash",
                 description,
+                constraint_trace={"crashed_before_gate": True}  # explains why trace is absent
             )
 
             log_result(
@@ -1366,11 +1367,15 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         print(f"latency      : {new_latency:.1f}ms")
         print(f"llm_cost     : ${llm_cost:.6f}")
 
-        if is_improvement(new_metrics, best_metrics, objective):
+        improved, constraint_trace = is_improvement(new_metrics, best_metrics, objective)
+
+        if improved:
             commit = git_commit(f"experiment: {description}")
             log_result(exp_id, commit, new_metrics, "keep", description)
-            save_experiment(exp_id, objective, prompt, new_code, new_metrics, "keep", description)
-            print(f"✅ KEEP — improved on objective '{objective}'")
+            save_experiment(exp_id, objective, prompt, new_code, new_metrics, "keep", description,
+                constraint_trace=constraint_trace)
+            passed = [k for k, v in constraint_trace.items() if v]
+            print(f"✅ KEEP — objective='{objective}'  passed={passed}")
             kept_any = True
 
             # ── Auto-update search profile ──
@@ -1397,8 +1402,10 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         else:
             git_restore()
             log_result(exp_id, "discarded", new_metrics, "discard", description)
-            save_experiment(exp_id, objective, prompt, new_code, new_metrics, "discard", description)
-            print(f"❌ DISCARD — no improvement on '{objective}'")
+            save_experiment(exp_id, objective, prompt, new_code, new_metrics, "discard", description,
+                constraint_trace=constraint_trace)
+            failed = [k for k, v in constraint_trace.items() if not v]
+            print(f"❌ DISCARD — objective='{objective}'  failed={failed}")
             history.append({
                 "description": description,
                 "metrics":     new_metrics,
