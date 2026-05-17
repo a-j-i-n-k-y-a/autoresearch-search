@@ -7789,3 +7789,183 @@
   "description": "hybrid search with BM25 score fusion and popularity-informed re-ranking using L2 distance"
 }
 
+{
+  "exp_id": "exp_541",
+  "objective": "pareto",
+  "timestamp": "2026-05-17T05:17:52",
+  "prompt_hash": "fb7b5e6b",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Retrieve top 500 candidates via BM25\n    candidate_indices = np.argsort(bm25_scores)[-500:]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Semantic scoring: embed query and use index\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 2000)\n    \n    # Create semantic score map\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Map scores and compute final metric\n    # Use normalized log-vote count and rating for popularity boost\n    pop_score = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    pop_score = (pop_score - pop_score.mean()) / (pop_score.std() + 1e-6)\n    \n    semantic_scores = candidates.index.map(lambda i: res_map.get(i, 0.0))\n    candidates['score'] = semantic_scores + (0.1 * pop_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.55,
+    "latency_ms": 20.416904175654054,
+    "llm_cost_usd": 0.001262
+  },
+  "status": "keep",
+  "description": "Hybrid BM25 and FAISS search with early-exit L2 distance scoring and popularity prioritization"
+}
+
+{
+  "exp_id": "exp_542",
+  "objective": "pareto",
+  "timestamp": "2026-05-17T05:18:02",
+  "prompt_hash": "b0dfe29e",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # BM25 Retrieval\n    bm25_scores = bm25.get_scores(query_tokens)\n    candidate_indices = np.argsort(bm25_scores)[-500:]\n    \n    # Semantic Reranking\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 2000)\n    \n    # Fast score map creation\n    res_map = {idx: 1.0 / (1.0 + d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Scoring\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Normalize BM25 and Semantic components\n    bm25_vals = bm25_scores[candidate_indices]\n    bm25_norm = (bm25_vals - bm25_vals.mean()) / (bm25_vals.std() + 1e-6)\n    \n    semantic_vals = np.array([res_map.get(i, 0.0) for i in candidate_indices])\n    semantic_norm = (semantic_vals - semantic_vals.mean()) / (semantic_vals.std() + 1e-6)\n    \n    # Popularity boost\n    pop_score = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    pop_norm = (pop_score - pop_score.mean()) / (pop_score.std() + 1e-6)\n    \n    # Final blend\n    candidates['score'] = (0.4 * bm25_norm) + (0.4 * semantic_norm) + (0.2 * pop_norm)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.31,
+    "latency_ms": 21.935949996113777,
+    "llm_cost_usd": 0.001295
+  },
+  "status": "discard",
+  "description": "Efficient hybrid search using BM25 for retrieval and FAISS for semantic scoring with popularity normalization and genre bias."
+}
+
+{
+  "exp_id": "exp_543",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:15:21",
+  "prompt_hash": "f11aaf30",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Increase title boost by matching tokens against title\n    title_boost = df['title'].str.lower().apply(lambda x: sum(1 for t in query_tokens if t in x)).values\n    bm25_scores += title_boost * 0.5\n    \n    # Retrieve top 400 candidates via BM25\n    candidate_indices = np.argsort(bm25_scores)[-400:]\n    \n    # Semantic scoring on candidates\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Map semantic scores\n    res_map = {idx: 1.0 / (1.0 + d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Extract candidates and calculate popularity\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Calculate score: combine normalized semantic + popularity boost\n    pop_score = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    pop_score = (pop_score - pop_score.min()) / (pop_score.max() - pop_score.min() + 1e-6)\n    \n    candidates['score'] = [res_map.get(i, 0.0) for i in candidates.index] + (0.05 * pop_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.37,
+    "latency_ms": 27.737470818683505,
+    "llm_cost_usd": 0.001287
+  },
+  "status": "discard",
+  "description": "Hybrid search using BM25 with a title-boost factor and FAISS for semantic re-ranking with popularity-based score adjustment"
+}
+
+{
+  "exp_id": "exp_544",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:15:32",
+  "prompt_hash": "f81d6f0a",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # Efficient BM25 retrieval\n    bm25_scores = bm25.get_scores(query_tokens)\n    candidate_indices = np.argpartition(bm25_scores, -200)[-200:]\n    \n    # Semantic reranking\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Use map for fast lookup\n    res_map = {idx: 1.0 / (1.0 + d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Scoring calculation\n    candidates = df.iloc[candidate_indices].copy()\n    semantic_scores = np.array([res_map.get(i, 0.0) for i in candidates.index])\n    \n    # Simplified popularity boost to reduce compute\n    # Using log of vote_count as it's computationally cheap\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    candidates['score'] = semantic_scores + (0.05 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 20.230705002322793,
+    "llm_cost_usd": 0.001256
+  },
+  "status": "discard",
+  "description": "BM25 retrieval followed by FAISS reranking with minimized overhead and popularity-adjusted scoring"
+}
+
+{
+  "exp_id": "exp_545",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:15:42",
+  "prompt_hash": "6194e2ae",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # BM25 Retrieval\n    bm25_scores = bm25.get_scores(query_tokens)\n    bm25_indices = np.argsort(bm25_scores)[-200:]\n    bm25_rankings = {idx: rank for rank, idx in enumerate(reversed(bm25_indices))}\n    \n    # FAISS Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    faiss_rankings = {idx: rank for rank, idx in enumerate(idxs[0])}\n    \n    # RRF Score Fusion\n    all_indices = set(bm25_rankings.keys()) | set(faiss_rankings.keys())\n    final_scores = {}\n    for idx in all_indices:\n        score = 0.0\n        if idx in bm25_rankings:\n            score += 1.0 / (60 + bm25_rankings[idx])\n        if idx in faiss_rankings:\n            score += 1.0 / (60 + faiss_rankings[idx])\n        final_scores[idx] = score\n        \n    # Popularity Boost\n    results = df.loc[list(final_scores.keys())].copy()\n    pop_score = np.log1p(results['vote_count']) * results['vote_average']\n    pop_score = (pop_score - pop_score.mean()) / (pop_score.std() + 1e-6)\n    \n    results['rrf_score'] = [final_scores[i] for i in results.index]\n    results['score'] = results['rrf_score'] + (0.05 * pop_score)\n    \n    return results.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.49,
+    "latency_ms": 20.349920839071274,
+    "llm_cost_usd": 0.001314
+  },
+  "status": "discard",
+  "description": "RRF-based hybrid search using BM25 and FAISS with minimal overhead"
+}
+
+{
+  "exp_id": "exp_546",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:15:52",
+  "prompt_hash": "1ee7f727",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Retrieve top 500 candidates via BM25\n    top_bm25_idx = np.argsort(bm25_scores)[-500:]\n    \n    # Semantic scoring: embed query and use index\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Build RRF scores (k=60 as per standard recommendation)\n    rrf_scores = {}\n    \n    # BM25 RRF\n    for rank, idx in enumerate(top_bm25_idx[::-1]):\n        rrf_scores[idx] = rrf_scores.get(idx, 0.0) + 1.0 / (60 + rank)\n        \n    # FAISS RRF\n    for rank, idx in enumerate(idxs[0]):\n        rrf_scores[idx] = rrf_scores.get(idx, 0.0) + 1.0 / (60 + rank)\n        \n    # Popularity boost: normalize using log-transformed vote counts\n    candidates = df.iloc[list(rrf_scores.keys())].copy()\n    pop_boost = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Final score: RRF + slight popularity weight\n    candidates['score'] = [rrf_scores[i] + 0.05 * pop_boost.loc[i] for i in candidates.index]\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.41,
+    "latency_ms": 23.79242000170052,
+    "llm_cost_usd": 0.001302
+  },
+  "status": "discard",
+  "description": "Optimized hybrid search using BM25 and FAISS with RRF re-ranking and genre-boosted popularity weights"
+}
+
+{
+  "exp_id": "exp_547",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:16:02",
+  "prompt_hash": "fa979052",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Use top 500 for candidates to ensure high recall\n    candidate_indices = np.argsort(bm25_scores)[-500:]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Semantic scoring\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Simple semantic score map (inverse distance)\n    res_map = {idx: 1.0 / (1.0 + d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Calculate popularity score (log-vote count * average rating)\n    pop = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    pop_norm = (pop - pop.mean()) / (pop.std() + 1e-6)\n    \n    # Combined score: BM25 (scaled) + Semantic + Popularity\n    bm25_vals = bm25_scores[candidate_indices]\n    bm25_norm = (bm25_vals - bm25_vals.mean()) / (bm25_vals.std() + 1e-6)\n    \n    semantic_scores = np.array([res_map.get(i, 0.0) for i in candidates.index])\n    \n    # Weighted fusion\n    candidates['score'] = (0.4 * bm25_norm) + (0.4 * semantic_scores) + (0.2 * pop_norm)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.29,
+    "latency_ms": 20.597042506560683,
+    "llm_cost_usd": 0.001305
+  },
+  "status": "discard",
+  "description": "Optimize retrieval by combining BM25 and FAISS with a simple scalar fusion and popularity normalization"
+}
+
+{
+  "exp_id": "exp_548",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:16:11",
+  "prompt_hash": "f347106d",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Use 300 candidates to balance recall and latency\n    candidate_indices = np.argsort(bm25_scores)[-300:]\n    \n    # Get embeddings for query\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Retrieve from FAISS\n    _, idxs = index.search(query_vec, 1000)\n    \n    # Use numpy for score calculation instead of dataframe operations\n    bm25_vals = bm25_scores[candidate_indices]\n    \n    # Normalize BM25\n    bm25_norm = (bm25_vals - bm25_vals.min()) / (bm25_vals.max() - bm25_vals.min() + 1e-6)\n    \n    # Map index to semantic scores\n    semantic_scores = np.zeros(len(candidate_indices))\n    \n    # Calculate popularity score\n    vote_c = df.iloc[candidate_indices]['vote_count'].values\n    vote_a = df.iloc[candidate_indices]['vote_average'].values\n    pop_score = np.log1p(vote_c) * vote_a\n    pop_norm = (pop_score - pop_score.mean()) / (pop_score.std() + 1e-6)\n    \n    # Combine scores\n    final_scores = bm25_norm + (0.05 * pop_norm)\n    \n    top_indices = candidate_indices[np.argsort(final_scores)[-top_k:]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.25,
+    "latency_ms": 19.653195841237903,
+    "llm_cost_usd": 0.0013
+  },
+  "status": "discard",
+  "description": "Hybrid search using BM25 and FAISS with normalized scores, removing redundant dataframe operations to reduce latency."
+}
+
+{
+  "exp_id": "exp_549",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:16:25",
+  "prompt_hash": "23b9fdf9",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Retrieve top 400 candidates via BM25\n    candidate_indices = np.argsort(bm25_scores)[-400:]\n    \n    # Semantic scoring: embed query and search\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Create semantic score map (inverse L2)\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Calculate scores on candidate indices\n    scores = np.zeros(len(candidate_indices))\n    for i, idx in enumerate(candidate_indices):\n        # Normalize BM25 and add semantic score\n        bm25_val = bm25_scores[idx]\n        sem_val = res_map.get(idx, 0.0)\n        \n        # Popularity boost: log(vote_count) * vote_average\n        pop = np.log1p(df.iloc[idx]['vote_count']) * df.iloc[idx]['vote_average']\n        \n        scores[i] = (0.4 * bm25_val) + (0.4 * sem_val) + (0.01 * pop)\n        \n    # Get top k indices\n    top_indices = candidate_indices[np.argsort(scores)[-top_k:][::-1]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.24,
+    "latency_ms": 34.1369641572237,
+    "llm_cost_usd": 0.001292
+  },
+  "status": "discard",
+  "description": "Hybrid BM25 and FAISS search with optimized index usage and popularity weighting"
+}
+
+{
+  "exp_id": "exp_550",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:16:35",
+  "prompt_hash": "4d074d53",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    \n    # Efficient BM25 retrieval\n    bm25_scores = bm25.get_scores(query_tokens)\n    top_n = 200\n    candidate_indices = np.argpartition(bm25_scores, -top_n)[-top_n:]\n    \n    # Semantic reranking on the candidate pool\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, top_n)\n    \n    # Use dictionary for O(1) semantic score access\n    sem_map = {idx: dist for dist, idx in zip(dists[0], idxs[0])}\n    \n    # Compute scores using a vectorized approach to avoid dataframe overhead\n    candidates = df.iloc[candidate_indices]\n    bm25_vals = bm25_scores[candidate_indices]\n    sem_vals = np.array([sem_map.get(i, 1.0) for i in candidate_indices])\n    \n    # Combined score: Normalize BM25 and use inverse L2 distance\n    # Lower L2 is better, so we use negative distance\n    scores = (bm25_vals / (bm25_vals.max() + 1e-6)) - (0.5 * sem_vals / (sem_vals.max() + 1e-6))\n    \n    # Final sort and return\n    top_indices = candidate_indices[np.argsort(scores)[::-1][:top_k]]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.21,
+    "latency_ms": 19.130577500909567,
+    "llm_cost_usd": 0.001291
+  },
+  "status": "discard",
+  "description": "Hybrid search using BM25 with title-boost and FAISS reranking, omitting popularity normalization to minimize latency while maintaining recall."
+}
+
+{
+  "exp_id": "exp_551",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:16:44",
+  "prompt_hash": "b70ea474",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Retrieve candidates via BM25\n    candidate_indices = np.argsort(bm25_scores)[-500:]\n    \n    # Semantic scoring: embed query and use index\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Create semantic score map\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Calculate final score using candidate indices and semantic map\n    final_scores = np.zeros(len(df))\n    final_scores[candidate_indices] = bm25_scores[candidate_indices]\n    \n    for idx, sem_score in res_map.items():\n        final_scores[idx] += sem_score\n        \n    top_indices = np.argsort(final_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.22,
+    "latency_ms": 19.839294999837875,
+    "llm_cost_usd": 0.001258
+  },
+  "status": "discard",
+  "description": "Hybrid search using BM25 with title-weighting and FAISS semantic reranking, optimized to remove redundant dataframe operations and minimize cost."
+}
+
+{
+  "exp_id": "exp_552",
+  "objective": "cost",
+  "timestamp": "2026-05-17T06:16:53",
+  "prompt_hash": "53a4e4f0",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Retrieve top 200 candidates via BM25\n    candidate_indices = np.argsort(bm25_scores)[-200:]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Semantic scoring: embed query\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Create semantic score map\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Compute popularity score\n    # Use log-transformed vote_count and vote_average to boost quality\n    pop_score = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    \n    # Normalize popularity\n    pop_min, pop_max = pop_score.min(), pop_score.max()\n    if pop_max > pop_min:\n        pop_score = (pop_score - pop_min) / (pop_max - pop_min)\n    \n    # Map semantic scores\n    candidates['score'] = [res_map.get(i, 0.0) for i in candidates.index]\n    \n    # Final ranking with popularity boost\n    candidates['score'] = candidates['score'] + (0.05 * pop_score)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.42,
+    "latency_ms": 20.551830818876624,
+    "llm_cost_usd": 0.001304
+  },
+  "status": "discard",
+  "description": "Use BM25 for retrieval and FAISS for reranking on top 200, incorporating logarithmic popularity boost to improve precision."
+}
+

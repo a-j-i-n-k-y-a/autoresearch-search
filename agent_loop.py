@@ -13,6 +13,13 @@ import subprocess
 from openai import OpenAI
 from prepare import load_resources, evaluate, BENCHMARK_QUERIES
 import filecmp
+
+# at the top of the file, after imports
+RECALL_FLOOR = 0.50
+MAX_RECALL_DROP_RATIO = 0.95
+MAX_LATENCY_INCREASE = 1.10
+MAX_COST_INCREASE = 2.00
+MIN_LATENCY_IMPROVEMENT = 0.05
 # ─── GLOBAL RESOURCE CACHE ─────────────────────────────
 
 CACHED_RESOURCES = None
@@ -100,15 +107,6 @@ def is_improvement(new, best, objective):
     - Never collapse metrics into one score
     """
      # ── Global constraints ─────────────────────────────
-    RECALL_FLOOR = 0.50
-
-    # Prevent catastrophic regressions
-    MAX_RECALL_DROP_RATIO = 0.95
-
-    # Pareto tolerance thresholds
-    MAX_LATENCY_INCREASE = 1.10
-    MAX_COST_INCREASE    = 2.00
-    MIN_LATENCY_IMPROVEMENT = 0.05
 
     checks = {
         "recall_floor":    new["recall"] >= RECALL_FLOOR,
@@ -140,17 +138,14 @@ def is_improvement(new, best, objective):
 
     # ── Cost objective ────────────────────────────────
     elif objective == "cost":
-
-        # Cheaper garbage is still garbage
         if not recall_ok():
             return False
-
+        if new["latency_ms"] > best["latency_ms"] * MAX_LATENCY_INCREASE:
+            return False
         return new["llm_cost_usd"] < best["llm_cost_usd"]
 
     # ── Pareto objective ──────────────────────────────
     elif objective == "pareto":
-
-        MAX_PARETO_RECALL_DROP = 0.02
 
         # 1. Recall can drop, but only a tiny bit (max 0.02)
         if new["recall"] < best["recall"] - MAX_PARETO_RECALL_DROP:
@@ -188,7 +183,6 @@ def is_baseline(description):
     
 def best_from_history(history, objective):
     """Find the best kept experiment from history for the given objective."""
-    RECALL_FLOOR = 0.5
     kept = [
         r for r in history
         if r["status"] == "keep"
@@ -330,6 +324,8 @@ def git_commit(message):
             f"STDOUT:\n{e.stdout}\n\n"
             f"STDERR:\n{e.stderr}"
         )
+    
+    return commit_result.stdout.strip()
 
 def git_restore():
     """
@@ -446,10 +442,7 @@ def update_profile(objective, metrics, description):
 
     # Regenerate registry.py from all existing profiles
     regenerate_registry(objective, profile_name, metrics, description)
-    
-    # Save the file
-    shutil.copy("search.py", profile_path)
-    print(f"   📦 Profile updated → {profile_path}")
+
 
 
 def regenerate_registry(updated_objective, updated_profile, updated_metrics, updated_description):
@@ -857,7 +850,27 @@ def ask_agent(program_md, search_py, history, objective):
 
                     "Recall must stay above 0.5."
                 ),
-        "cost":    "Minimize LLM tokens — write simpler, shorter search.py so the next prompt is cheaper.",
+        "cost":    (
+                    "Reduce runtime retrieval complexity WITHOUT reducing retrieval quality.\n\n"
+
+                    "Do NOT:\n"
+                    "- remove BM25 entirely\n"
+                    "- collapse to pure FAISS retrieval\n"
+                    "- aggressively shrink candidate pools\n"
+                    "- simplify retrieval in ways that destroy recall\n\n"
+
+                    "Prefer SMALL structural optimizations such as:\n"
+                    "- reducing rerank pool sizes moderately\n"
+                    "- avoiding redundant encode() calls\n"
+                    "- simplifying weighting formulas\n"
+                    "- reducing dataframe operations\n"
+                    "- caching intermediate computations\n"
+                    "- pruning unnecessary reranking stages\n"
+                    "- lightweight candidate filtering\n"
+                    "- removing duplicated work\n\n"
+
+                    "Recall must stay above 0.5."
+                ),
         "pareto":  "Improve recall or reduce latency. Recall must not drop. Latency must not increase more than 10%.",
     }[objective]
 
@@ -984,7 +997,7 @@ updated     : {time.strftime("%Y-%m-%dT%H:%M:%S")}
 |--------|----------|------|
 | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
 | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
-| llm_cost | ${baseline_metrics['llm_cost_usd']:.6f} | ${best_metrics['llm_cost_usd']:.6f} |
+| llm_cost | {"n/a" if baseline_metrics['llm_cost_usd'] == float("inf") else f"${baseline_metrics['llm_cost_usd']:.6f}"} | {"n/a" if best_metrics['llm_cost_usd'] == float("inf") else f"${best_metrics['llm_cost_usd']:.6f}"} |
 
 ## Progress
 - Experiments kept : {n_kept}
@@ -1059,42 +1072,42 @@ See experiments/log.jsonl for full attempt history.
 
     # ── Build LLM prompt ──
     prompt = f"""
-                You are documenting the final architecture of an autonomously optimised movie search system.
+You are documenting the final architecture of an autonomously optimised movie search system.
 
-                ## Winning experiment reference:
-                - exp_id      : {best_exp_id}
-                - prompt_hash : {best_prompt_hash}
-                - Prompt file : experiments/prompts/{best_prompt_hash}.txt
+## Winning experiment reference:
+- exp_id      : {best_exp_id}
+- prompt_hash : {best_prompt_hash}
+- Prompt file : experiments/prompts/{best_prompt_hash}.txt
 
-                ## Winning search.py:
-                ```python
-                {search_py}
-                ```
+## Winning search.py:
+```python
+{search_py}
+```
 
-                ## Experiment summary:
-                - Baseline  → recall={baseline_metrics['recall']:.3f}  latency={baseline_metrics['latency_ms']:.1f}ms
-                - Final     → recall={best_metrics['recall']:.3f}  latency={best_metrics['latency_ms']:.1f}ms  cost=${best_metrics['llm_cost_usd']:.6f}
-                - Objective : {objective}
-                - Total experiments : {n_experiments}  |  Kept: {len(kept)}  |  Discarded: {len(discarded)}  |  Crashed: {len(crashed)}
+## Experiment summary:
+- Baseline  → recall={baseline_metrics['recall']:.3f}  latency={baseline_metrics['latency_ms']:.1f}ms
+- Final     → recall={best_metrics['recall']:.3f}  latency={best_metrics['latency_ms']:.1f}ms  cost=${best_metrics['llm_cost_usd']:.6f}
+- Objective : {objective}
+- Total experiments : {n_experiments}  |  Kept: {len(kept)}  |  Discarded: {len(discarded)}  |  Crashed: {len(crashed)}
 
-                ## Full experiment history:
-                {chr(10).join([format_history_entry(r) for r in history])}
+## Full experiment history:
+{chr(10).join([format_history_entry(r) for r in history])}
 
-                Write a concise ARCHITECTURE.md with sections:
-                # Architecture
-                ## What it does
-                ## Components
-                ## Why it works
-                ## Tradeoffs
-                ## Key experiments
-                ## Metrics
-                | Metric | Baseline | Final |
-                |--------|----------|-------|
-                | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
-                | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
-                ## How to run
-                Return only the markdown. No preamble.
-                """
+Write a concise ARCHITECTURE.md with sections:
+# Architecture
+## What it does
+## Components
+## Why it works
+## Tradeoffs
+## Key experiments
+## Metrics
+| Metric | Baseline | Final |
+|--------|----------|-------|
+| recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
+| latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
+## How to run
+Return only the markdown. No preamble.
+"""
 
     response = call_api([{"role": "user", "content": prompt}])
     content  = response.choices[0].message.content.strip()
@@ -1126,6 +1139,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
 
     # ── Load full history from all previous runs ──
     history      = []
+    kept_any = False
     past_records = load_experiments()
     if past_records:
         for r in past_records:
@@ -1155,6 +1169,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     # to be on disk, which may be the original baseline rather than the
     # 0.900 recall implementation found in a previous run.
     best_prior = best_from_history(history, objective)
+    
     if best_prior:
         profile_name = OBJECTIVE_TO_PROFILE.get(objective)
         profile_path = f"search_profiles/{profile_name}.py"
@@ -1188,7 +1203,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     baseline_metrics = {
     "recall":       baseline_recall,
     "latency_ms":   baseline_latency,
-    "llm_cost_usd": 0.0
+    "llm_cost_usd": float("inf")
     }
     print(f"recall@10    : {baseline_recall:.6f}")
     print(f"latency      : {baseline_latency:.1f}ms")
@@ -1356,6 +1371,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             log_result(exp_id, commit, new_metrics, "keep", description)
             save_experiment(exp_id, objective, prompt, new_code, new_metrics, "keep", description)
             print(f"✅ KEEP — improved on objective '{objective}'")
+            kept_any = True
 
             # ── Auto-update search profile ──
             best_metrics = new_metrics.copy()
@@ -1410,11 +1426,34 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
             latest_kept["description"]
         )
 
-    # ── Document final architecture (full LLM-generated version) ──
-    document_architecture(best_metrics, baseline_metrics, objective, n_experiments, history)
+    # ── Document final architecture only if promotion occurred ──
+
+    if kept_any:
+
+        document_architecture(
+            best_metrics,
+            baseline_metrics,
+            objective,
+            n_experiments,
+            history,
+        )
+
+    else:
+
+        arch_path = f"ARCHITECTURE_{objective}.md"
+
+        if os.path.exists(arch_path):
+
+            os.remove(arch_path)
+
+            print(f"\n🗑️ Removed stale {arch_path}")
+
+        print("\n📄 No promoted architecture generated.")
 
     # ── Summary ──
-    cost_value = best_metrics["llm_cost_usd"]
+    final_metrics = (latest_kept["metrics"] if latest_kept else best_metrics )
+
+    cost_value = final_metrics["llm_cost_usd"]
 
     cost_str = (
         f"${cost_value:.6f}"
@@ -1425,20 +1464,34 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
     print("FINAL RESULTS")
     print("=" * 60)
     print(f"Objective    : {objective}")
-    print(f"Profile      : search_profiles/{OBJECTIVE_TO_PROFILE.get(objective)}.py")
+
+    profile_name = OBJECTIVE_TO_PROFILE.get(objective)
+    profile_path = f"search_profiles/{profile_name}.py"
+
+    if kept_any and os.path.exists(profile_path):
+
+        print(f"Profile      : {profile_path}")
+
+    else:
+
+        print("Profile      : no promoted profile yet")
+
     print(
         f"Baseline     → recall={baseline_metrics['recall']:.3f}  "
         f"latency={baseline_metrics['latency_ms']:.1f}ms"
     )
     print(
-        f"Best         → recall={best_metrics['recall']:.3f}  "
-        f"latency={best_metrics['latency_ms']:.1f}ms  "
+        f"Best         → recall={final_metrics['recall']:.3f}  "
+        f"latency={final_metrics['latency_ms']:.1f}ms  "
         f"cost={cost_str}"
     )
     print(f"\nFull log     : results.tsv")
     print(f"Replay log   : experiments/log.jsonl")
     print(f"Prompts      : experiments/prompts/")
-    print(f"Profile      : search_profiles/{OBJECTIVE_TO_PROFILE.get(objective)}.py")
+    if kept_any and os.path.exists(profile_path):
+        print(f"Profile      : {profile_path}")
+    else:
+        print("Profile      : no promoted profile yet")
     print(f"Registry     : search_profiles/registry.py")
     print(f"Architecture : ARCHITECTURE_{objective}.md")
     print(f"Best search  : current state of search.py")

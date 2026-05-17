@@ -24,9 +24,9 @@ PROFILES = {
     },
     "balanced": {
         "module": "search_profiles.balanced",
-        "recall": 0.52,
-        "latency_ms": 11.4461624994874,
-        "cost_usd": 0.000679,
+        "recall": 0.55,
+        "latency_ms": 20.416904175654054,
+        "cost_usd": 0.001262,
         "description": "best recall/latency tradeoff",
         "objective": "pareto",
         "use_when": "default — general search, no specific SLA",
