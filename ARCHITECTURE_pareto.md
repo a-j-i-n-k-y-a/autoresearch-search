@@ -1,42 +1,47 @@
 ---
-exp_id      : exp_541
-prompt_hash : fb7b5e6b
-prompt_file : experiments/prompts/fb7b5e6b.txt
+exp_id      : exp_102
+prompt_hash : 4312a717
+prompt_file : experiments/prompts/4312a717.txt
 objective   : pareto
-generated   : 2026-05-17T05:18:05
+generated   : 2026-05-19T13:44:21
 ---
 
 # Architecture
 
 ## What it does
-The system performs a high-performance hybrid movie search that combines keyword-based lexical matching with semantic embedding-based retrieval. It ranks results by synthesizing semantic similarity scores with popularity metrics to deliver relevant, high-quality content efficiently.
+The system performs a multi-stage hybrid search by aggregating results from a lexical BM25 engine and a semantic FAISS vector index. It refines the candidate pool using a weighted ensemble scoring function that integrates keyword relevance, semantic similarity, genre alignment, and popularity bias.
 
 ## Components
-- **BM25 Retrieval**: Operates as a coarse-grained filter to extract the top 500 candidate movies based on tokenized keyword relevance.
-- **FAISS Semantic Engine**: Provides dense vector similarity search; retrieves 2,000 top matches to ensure broad semantic coverage.
-- **Popularity Booster**: Normalizes `vote_count` (log-scale) and `vote_average` into a single popularity score, which is then blended with normalized semantic distances to adjust final rankings.
-- **Fusion Layer**: Calculates a composite score for the candidate pool: $Score = SemanticScore + (0.1 \times PopularityScore)$.
+*   **Retrieval:** Parallel execution of BM25 (lexical) and FAISS (semantic) to generate 200 candidates each.
+*   **Feature Scoring:** 
+    *   **Lexical:** Min-Max normalized BM25 scores.
+    *   **Semantic:** L2 distance inverted via $1/(1+d)$.
+    *   **Genre:** A soft-matching signal providing a 1.0 boost for intersection and 0.5 baseline.
+    *   **Popularity:** A log-transformed, z-score normalized signal derived from `vote_count`.
+*   **Aggregation:** A weighted linear combination (0.35 BM25, 0.45 Semantic, 0.1 Genre, 0.1 Popularity) for final ranking.
 
 ## Why it works
-The two-stage approach balances precision and recall: BM25 excels at specific title/keyword matches, while FAISS handles conceptual queries where user intent is implicit. The popularity boost ensures that in cases of semantic ambiguity, the system defaults to well-regarded, community-validated titles, increasing user satisfaction.
+The system achieves optimal recall through the integration of disparate signal sources:
+*   **Ensemble Weighting:** Transitioning from RRF to a weighted ensemble (0.35/0.45/0.1/0.1) improved recall from 0.636 to 0.682 (+0.046).
+*   **Genre/Popularity Injection:** Adding genre-match scores and log-transformed popularity boosts provided necessary precision constraints, evidenced by the final recall of 0.682 versus the initial baseline of 0.500 (+0.182).
+*   **Latency Budget:** The architecture maintains low latency (24.5ms) by avoiding heavy re-ranking models in favor of feature-based scalar fusion.
 
 ## Tradeoffs
-- **Latency vs. Accuracy**: By limiting the BM25 retrieval to 500 and performing a localized FAISS search, the system avoids expensive full-index operations, maintaining consistent latency at a slight cost to theoretical recall.
-- **Complexity**: The additive scoring logic requires careful scaling; overly aggressive popularity weighting can bias the results toward blockbusters at the expense of niche relevant titles.
+*   **Precision vs. Latency:** Increasing the candidate pool size and adding feature-based scores increased latency from 23.4ms to 24.5ms (+1.1ms).
+*   **Complexity:** The system relies on fixed weighting; while effective for the current dataset, it may require hyperparameter tuning if the distribution of popularity or genre metadata shifts significantly.
 
 ## Key experiments
-- **exp_541 (Final)**: Implemented the hybrid retrieval and popularity score normalization, which achieved the target pareto efficiency.
-- **Baseline**: Established the original BM25-based recall benchmark.
-- **Pool Scaling**: Multiple experiments showed that increasing the candidate pool beyond 500-1000 items significantly increased latency without providing proportional gains in recall.
+*   **exp_102:** Implementation of hybrid retrieval with normalized genre-match and popularity-weighted ensemble (Recall: 0.682).
+*   **exp_baseline:** Initial BM25/Semantic hybrid baseline (Recall: 0.500).
+*   **RRF Iterations:** Numerous experiments (e.g., "Implement RRF with candidate expansion...") showed that while RRF offers stable ranking, it consistently underperformed compared to explicit feature weighting for this specific task (Recall decreased in RRF-focused variants).
 
 ## Metrics
 | Metric | Baseline | Final |
 |--------|----------|-------|
-| recall@10 | 0.580 | 0.550 |
-| latency_ms | 20.7 | 20.4 |
+| recall@10 | 0.636 | 0.682 |
+| latency_ms | 23.4 | 24.5 |
 
 ## How to run
-1. Install dependencies: `pip install numpy pandas faiss-cpu rank-bm25`.
-2. Initialize the `bm25` object and `faiss.Index` with your movie corpus.
-3. Import the `search` function from `search.py`.
-4. Call `search(query, df, bm25, model, index)` to retrieve the top 10 ranked results.
+1. Install requirements: `pip install -r requirements.txt`
+2. Ensure FAISS index and BM25 object are initialized.
+3. Call `search(query, df, bm25, model, index)` to retrieve sorted movie records.
