@@ -11,8 +11,9 @@ import shutil
 from dotenv import load_dotenv
 import subprocess
 from openai import OpenAI
-from prepare import load_resources, evaluate, BENCHMARK_QUERIES
+from prepare import load_resources, evaluate, evaluate_metrics, evaluate_by_slice, per_query_results, regression_report, run_full_eval, _run_retrieval_pass, BENCHMARK_QUERIES, TOP_K
 import filecmp
+import random
 
 # at the top of the file, after imports
 RECALL_FLOOR = 0.50
@@ -91,7 +92,7 @@ def get_llm_cost(response):
     )
 
 # ─── OBJECTIVE ──────────────────────────────────────────────
-def is_improvement(new, best, objective):
+def is_improvement(new, best, objective, recall_noise=0.0):
     """
     Multi-objective comparison with explicit constraints.
 
@@ -109,9 +110,12 @@ def is_improvement(new, best, objective):
     """
     # ── Global constraints ─────────────────────────────
     checks = {
-        "recall_floor":    new["recall"] >= RECALL_FLOOR,
-        "recall_drop":     new["recall"] >= best["recall"] * MAX_RECALL_DROP_RATIO,
+        "recall_floor": new["recall"] >= RECALL_FLOOR,
+        "recall_drop": new["recall"] >= best["recall"] * MAX_RECALL_DROP_RATIO,
         "latency_improve": (best["latency_ms"] - new["latency_ms"]) > MIN_LATENCY_IMPROVEMENT,
+        "mrr_ok": new.get("mrr", 0) >= best.get("mrr", 0) * 0.97,
+        "top1_ok": new.get("top1", 0) >= best.get("top1", 0) * 0.95,
+        "precision_ok": new.get("precision", 0) >= best.get("precision", 0) * 0.95,
     }
 
     # ── Helper: quality gate ──────────────────────────
@@ -126,22 +130,50 @@ def is_improvement(new, best, objective):
         return True
 
     # ── Recall objective ──────────────────────────────
+    # AFTER
     if objective == "recall":
-        checks["recall_improve"] = new["recall"] > best["recall"]
-        return checks["recall_improve"], checks
+        checks["recall_ok"]      = recall_ok()   # floor + drop gate, same as all other objectives
+        DEV_QUERIES              = [q for q in BENCHMARK_QUERIES if q.get("split") == "dev"]
+        min_improvement          = max(recall_noise * 0.5, 1 / len(DEV_QUERIES))
+        checks["recall_improve"] = (new["recall"] - best["recall"]) > min_improvement
+        passed = (
+            checks["recall_ok"]
+            and checks["recall_improve"]
+            and checks["mrr_ok"]
+            and checks["top1_ok"]
+            and checks["precision_ok"]
+        )
+        return passed, checks
 
     # ── Latency objective ─────────────────────────────
     elif objective == "latency":
         checks["recall_ok"]       = recall_ok()
         checks["latency_improve"] = (best["latency_ms"] - new["latency_ms"]) > MIN_LATENCY_IMPROVEMENT
-        return checks["recall_ok"] and checks["latency_improve"], checks
+        passed = (
+            checks["recall_ok"]
+            and checks["mrr_ok"]
+            and checks["top1_ok"]
+            and checks["precision_ok"]
+            and checks["latency_improve"]
+        )
+
+        return passed, checks
 
     # ── Cost objective ────────────────────────────────
     elif objective == "cost":
         checks["recall_ok"]      = recall_ok()
         checks["latency_ok"]     = new["latency_ms"] <= best["latency_ms"] * MAX_LATENCY_INCREASE
         checks["cost_improve"]   = new["llm_cost_usd"] < best["llm_cost_usd"]
-        return checks["recall_ok"] and checks["latency_ok"] and checks["cost_improve"], checks
+        passed = (
+            checks["recall_ok"]
+            and checks["mrr_ok"]
+            and checks["top1_ok"]
+            and checks["precision_ok"]
+            and checks["latency_ok"]
+            and checks["cost_improve"]
+        )
+
+        return passed, checks
 
     # ── Pareto objective ──────────────────────────────
     elif objective == "pareto":
@@ -161,6 +193,9 @@ def is_improvement(new, best, objective):
             checks["latency_ok"],
             checks["cost_ok"],
             checks["any_improve"],
+            checks["mrr_ok"],
+            checks["top1_ok"],
+            checks["precision_ok"],
         ])
         return passed, checks
 
@@ -209,10 +244,18 @@ def best_from_history(history, objective):
             return None
         return min(feasible, key=lambda r: r["metrics"]["llm_cost_usd"])
 
-    # we can also extract rue pareto history - midway recall, miway latency. currently doing
+    # we can also extract true pareto history - midway recall, miway latency. currently doing
     # with recall max first in the history and reducing latency lateron
     elif objective == "pareto":
-        return max(kept, key=lambda r: r["metrics"]["recall"])
+        # True Pareto seed: best combined recall + latency tradeoff.
+        # Normalize both axes so neither dominates by scale.
+        max_recall  = max(r["metrics"]["recall"]     for r in kept)
+        min_latency = min(r["metrics"]["latency_ms"] for r in kept)
+        def pareto_score(r):
+            norm_recall  = r["metrics"]["recall"]     / max_recall  if max_recall  else 0
+            norm_latency = min_latency / r["metrics"]["latency_ms"] if r["metrics"]["latency_ms"] else 0
+            return norm_recall + norm_latency
+        return max(kept, key=pareto_score)
     return None
 
 # ─── EVAL ───────────────────────────────────────────────────
@@ -223,7 +266,12 @@ def run_eval():
     Run benchmark on current search.py.
 
     Returns:
-        (recall, latency_ms)
+        (recall, latency_ms, slice_results, full_metrics)
+
+        recall       — recall@10 float (the gate metric used by is_improvement)
+        latency_ms   — median per-query wall-clock latency across N_TRIALS
+        slice_results — {slice_name: recall} from evaluate_by_slice()
+        full_metrics  — {recall, mrr, ndcg, precision, top1} from evaluate_metrics()
 
     Latency methodology:
     - warmup run
@@ -246,34 +294,69 @@ def run_eval():
     import search as search_module
 
     # ── Warmup : run the 50 benchmarks but throw the result away, coz it contains noise, coz its the first run
-    evaluate(search_module.search, df, bm25, model, index)
+    run_full_eval(search_module.search, df, bm25, model, index, split='dev')  # warmup (discard)
 
-    # ── Recall (single deterministic run) ─
-    recall = evaluate(search_module.search, df, bm25, model, index)
+    # ── Randomized sub-sample eval (gate metric) ───────────
+    # 75% of dev queries randomly sampled each run — different subset
+    # every experiment so improvements must generalize across queries,
+    # not exploit fixed query distribution.
+    # Warmup above uses full set intentionally (no sample_size).
+    DEV_QUERIES = [q for q in BENCHMARK_QUERIES if q.get("split") == "dev"]
+    SAMPLE_SIZE = max(1, int(len(DEV_QUERIES) * 0.75))  # ~11 of 15
 
-    # ── Latency trials : calculates per query latency (we divide by the len(benchmark_queries)),
-    # and we don't take mean of the 5 trials we take median, coz if pc hiccups once it will skew the mean,
-    # not the median
-    trials = []
+    result = run_full_eval(
+        search_module.search, df, bm25, model, index,
+        split='dev', sample_size=SAMPLE_SIZE, seed=None  # seed=None → different each run
+    )
+    recall        = result["recall"]
+    full_metrics  = result["full_metrics"]
+    slice_results = result["slices"]
+    per_query     = result["per_query"]
 
-    N_TRIALS = 5
+    print(f"  mrr@10={full_metrics['mrr']:.3f}  ndcg@10={full_metrics['ndcg']:.3f}"
+          f"  precision@10={full_metrics['precision']:.3f}  top1={full_metrics['top1']:.3f}")
+    for slice_name, slice_recall in sorted(slice_results.items()):
+        print(f"  {slice_name:<15}: {slice_recall:.3f}")
+
+    # ── Per-query timing for proper percentiles ────────────
+    # Time each query individually rather than timing the full evaluate()
+    # call and dividing — that only gives an average, not a distribution.
+    # 5 trials × 15 queries = 75 data points for stable percentiles.
+    per_query_times = []
+    DEV_QUERIES     = [q for q in BENCHMARK_QUERIES if q.get("split") == "dev"]
+    N_TRIALS        = 5
 
     for _ in range(N_TRIALS):
-        start = time.perf_counter()
+        for item in DEV_QUERIES:
+            start      = time.perf_counter()
+            search_module.search(item["query"], df, bm25, model, index, top_k=TOP_K)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            per_query_times.append(elapsed_ms)
 
-        evaluate(search_module.search, df, bm25, model, index)
+    per_query_times.sort()
+    n          = len(per_query_times)
+    latency_ms = statistics.median(per_query_times)
+    latency_p95 = per_query_times[min(int(n * 0.95), n - 1)]
+    latency_p99 = per_query_times[min(int(n * 0.99), n - 1)]
 
-        elapsed = (
-            (time.perf_counter() - start)
-            * 1000
-            / len(BENCHMARK_QUERIES)
-        )
+    # ── Bootstrap confidence interval on recall ────────────
+    # With 15 dev queries, 1 query flip = 0.067 recall change.
+    # Bootstrap resampling estimates the noise floor so is_improvement()
+    # can require improvements that exceed it.
+    # AFTER — pull from result already in hand, no extra retrieval pass
+    per_query_recalls = [v["recall"] for v in per_query.values()]
+    bootstrap_means = sorted(
+        statistics.mean(random.choices(per_query_recalls, k=len(per_query_recalls)))
+        for _ in range(1000)
+    )
+    recall_ci_low  = round(bootstrap_means[24],  6)   # 2.5th percentile
+    recall_ci_high = round(bootstrap_means[974], 6)   # 97.5th percentile
+    recall_noise   = round(recall_ci_high - recall_ci_low, 6)
 
-        trials.append(elapsed)
+    print(f"  recall CI   : [{recall_ci_low:.3f}, {recall_ci_high:.3f}]  noise={recall_noise:.3f}")
+    print(f"  lat p50/p95/p99: {latency_ms:.1f}/{latency_p95:.1f}/{latency_p99:.1f}ms")
 
-    latency_ms = statistics.median(trials)
-
-    return recall, latency_ms
+    return recall, latency_ms, slice_results, full_metrics, per_query, latency_p95, latency_p99, recall_noise
 
 # ─── FILE / GIT HELPERS ─────────────────────────────────────
 def read_file(path):
@@ -528,7 +611,57 @@ def regenerate_registry(updated_objective, updated_profile, updated_metrics, upd
     print(f"   📋 Registry updated → {registry_path}")
 
 # ─── LOGGING ────────────────────────────────────────────────
-RESULTS_HEADER = "exp_id\tcommit\trecall\tlatency_ms\tllm_cost_usd\tstatus\tdescription\n"
+# AFTER
+RESULTS_HEADER = "exp_id\tcommit\trecall\tlatency_ms\tlatency_p95\tlatency_p99\tllm_cost_usd\tstatus\tdescription\n"
+
+def audit_results_tsv():
+    """
+    Scan results.tsv for kept experiments that violate RECALL_FLOOR.
+    Rewrites their status to 'kept-subfloor' so they're visible but
+    clearly marked as invalid under the current floor.
+    Does not delete rows — preserves full audit trail.
+    """
+    if not os.path.exists("results.tsv"):
+        return
+
+    with open("results.tsv", "r") as f:
+        lines = f.readlines()
+
+    if not lines:
+        return
+
+    header   = lines[0]
+    rows     = lines[1:]
+    cols     = header.strip().split("\t")
+    patched  = 0
+    new_rows = []
+
+    for row in rows:
+        parts = row.strip().split("\t")
+        if len(parts) != len(cols):
+            new_rows.append(row)
+            continue
+
+        record = dict(zip(cols, parts))
+        try:
+            recall = float(record.get("recall", 1.0))
+            status = record.get("status", "")
+        except ValueError:
+            new_rows.append(row)
+            continue
+
+        if status == "keep" and recall < RECALL_FLOOR:
+            record["status"] = "kept-subfloor"
+            new_rows.append("\t".join(record[c] for c in cols) + "\n")
+            patched += 1
+        else:
+            new_rows.append(row)
+
+    if patched:
+        with open("results.tsv", "w") as f:
+            f.writelines([header] + new_rows)
+        print(f"   ⚠️  audit_results_tsv: marked {patched} subfloor kept rows as 'kept-subfloor'")
+
 
 def ensure_results_header():
     """
@@ -544,7 +677,7 @@ def ensure_results_header():
         first_line = f.readline()
 
     # Migrate old header that's missing exp_id
-    if first_line.startswith("commit\t") or not first_line.startswith("exp_id\t"):
+    if (first_line.startswith("commit\t") or not first_line.startswith("exp_id\t") or "latency_p95" not in first_line):
         with open("results.tsv", "r") as f:
             content = f.read()
         old_lines = content.split("\n")
@@ -554,14 +687,18 @@ def ensure_results_header():
         print("   ⚠️  Migrated results.tsv header to include exp_id column")
 
 def log_result(exp_id, commit, metrics, status, description):
-    """Append one row to results.tsv — exp_id + three separate metric columns."""
     ensure_results_header()
+    # p95/p99 absent on baseline and crash records — default to empty string
+    p95 = f"{metrics['latency_p95']:.1f}" if metrics.get("latency_p95") is not None else ""
+    p99 = f"{metrics['latency_p99']:.1f}" if metrics.get("latency_p99") is not None else ""
     with open("results.tsv", "a") as f:
         f.write(
             f"{exp_id}\t"
             f"{commit}\t"
             f"{metrics['recall']:.6f}\t"
             f"{metrics['latency_ms']:.1f}\t"
+            f"{p95}\t"
+            f"{p99}\t"
             f"{metrics['llm_cost_usd']:.6f}\t"
             f"{status}\t"
             f"{description}\n"
@@ -579,7 +716,7 @@ def save_prompt(prompt):
             f.write(prompt)
     return prompt_hash
 
-def save_experiment(exp_id, objective, prompt, search_py, metrics, status, description, constraint_trace=None):
+def save_experiment(exp_id, objective, prompt, search_py, metrics, status, description, constraint_trace=None, slice_results=None, full_metrics=None):
     """
     Save experiment record to experiments/log.jsonl.
     Pretty-printed, separated by blank lines.
@@ -596,7 +733,9 @@ def save_experiment(exp_id, objective, prompt, search_py, metrics, status, descr
         "metrics":          metrics,
         "status":           status,
         "description":      description,
-        "constraint_trace": constraint_trace or {},  # ← add this
+        "constraint_trace": constraint_trace or {},
+        "slice_results":    slice_results or {},
+        "full_metrics":     full_metrics or {},  # MRR, nDCG, precision, top1
     }
     with open("experiments/log.jsonl", "a") as f:
         f.write(json.dumps(record, indent=2) + "\n\n")
@@ -644,7 +783,7 @@ def replay_experiment(exp_id):
     write_file("search.py", clean_code)
 
     try:
-        recall, latency = run_eval()
+        recall, latency, _, _, _, _, _, _ = run_eval()
         print(f"   Replayed    : recall={recall:.3f}  latency={latency:.1f}ms")
     except Exception as e:
         print(f"   💥 Replay crashed: {e}")
@@ -667,12 +806,30 @@ def call_api(messages, retries=3):
                 raise
 
 # ─── AGENT PROMPTS ──────────────────────────────────────────
+# AFTER
 def format_history_entry(r):
+    m = r["metrics"]
+    # Secondary metrics may be absent in older history records — default to None
+    mrr       = m.get("mrr")
+    top1      = m.get("top1")
+    precision = m.get("precision")
+
+    secondary = ""
+    if any(v is not None for v in [mrr, top1, precision]):
+        secondary = (
+            f"  mrr={mrr:.3f}" if mrr is not None else "  mrr=n/a"
+        ) + (
+            f"  top1={top1:.3f}" if top1 is not None else "  top1=n/a"
+        ) + (
+            f"  precision={precision:.3f}" if precision is not None else "  precision=n/a"
+        )
+
     line = (
         f"- {r['description']}: "
-        f"recall={r['metrics']['recall']:.3f}  "
-        f"latency={r['metrics']['latency_ms']:.1f}ms  "
-        f"cost=${r['metrics']['llm_cost_usd']:.6f}  "
+        f"recall={m['recall']:.3f}  "
+        f"latency={m['latency_ms']:.1f}ms  "
+        f"cost=${m['llm_cost_usd']:.6f}"
+        f"{secondary}  "
         f"({r['status']})"
     )
     if r.get("traceback"):
@@ -809,8 +966,40 @@ def extract_code_features(search_py: str) -> str:
 
     return "\n".join(f"  - {f}" for f in features) if features else "  (none detected)"
 
+def format_query_diagnostics(per_query):
+    """
+    Format per-query results into a prompt-friendly failure report.
+    Shows only queries that missed at least one expected title,
+    sorted worst-first by recall. Capped at 8 to avoid prompt bloat.
+    """
+    if not per_query:
+        return "  (no diagnostics available)"
 
-def ask_agent(program_md, search_py, history, objective):
+    failures = [
+        (query, data)
+        for query, data in per_query.items()
+        if data["recall"] < 1.0
+    ]
+    failures.sort(key=lambda x: x[1]["recall"])
+    failures = failures[:8]
+
+    if not failures:
+        return "  ✅ All queries fully recalled — no failures to show"
+
+    lines = []
+    for query, data in failures:
+        retrieved = ", ".join(data["retrieved_titles"][:5])
+        lines.append(
+            f"  Query   : {query}\n"
+            f"  Recall  : {data['recall']:.2f}  "
+            f"MRR: {data['mrr']:.2f}  "
+            f"Top1: {data['top1']:.0f}  "
+            f"First hit: rank {data['rank_of_first_hit'] or 'none'}\n"
+            f"  Got     : [{retrieved}]\n"
+        )
+    return "\n".join(lines)
+
+def ask_agent(program_md, search_py, history, objective, per_query_diagnostics=None):
     """Ask LLM for next search.py modification. Returns (code, cost, description, prompt)."""
 
     history_str = "\n".join([format_history_entry(r) for r in history[-10:]])
@@ -871,6 +1060,9 @@ def ask_agent(program_md, search_py, history, objective):
         "pareto":  "Improve recall or reduce latency. Recall must not drop. Latency must not increase more than 10%.",
     }[objective]
 
+    # Add this variable before the prompt f-string
+    diagnostics_str = format_query_diagnostics(per_query_diagnostics) 
+
     prompt = f"""
 You are an autonomous research agent improving a movie search system.
 
@@ -908,11 +1100,8 @@ Do NOT repeat:
 If your idea is similar to any of the above, pick something structurally different.
 
 ## EXISTING CODE FEATURES (reference only)
-
 The current implementation already contains:
 {already_str}
-
-
 Guidelines:
 - Preserve the existing search() function signature.
 - Existing imports may still be required.
@@ -921,6 +1110,14 @@ Guidelines:
 - Preserve compatibility with the evaluation pipeline.
 - Modify only what is necessary to improve the objective.
 
+## CURRENT FAILURE ANALYSIS — queries where recall < 1.0 (worst first):
+{diagnostics_str}
+Use this to reason about WHY retrieval is failing, not just THAT it is failing.
+Ask yourself:
+- Are failures clustered in a specific slice (long_tail, ambiguous)?
+- Does the retrieved list suggest a vocabulary mismatch (BM25 failing)?
+- Does rank of first hit suggest reranking is the problem, not retrieval?
+- Would genre/vote signals push the right result higher?
 
 ## Think structurally different. Ask yourself:
 - Can I remove something and get equal recall? Simpler = better.
@@ -1103,6 +1300,14 @@ Write a concise ARCHITECTURE.md with sections:
 | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
 | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
 ## How to run
+STRICT RULES — violations undermine scientific integrity:
+- Every claim about WHY something works MUST cite a metric delta.
+  Good: "Adding genre weighting improved recall 0.71 → 0.79 (+0.08)"
+  Bad:  "Genre weighting helped the model understand context better"
+- Do NOT explain improvements that are smaller than measurement noise.
+- Do NOT attribute causality beyond what the metrics show.
+- If an experiment's benefit is unclear from the numbers, say so explicitly.
+- Prefer "we observed X" over "this works because Y" unless Y is directly evidenced.
 Return only the markdown. No preamble.
 """
 
@@ -1132,6 +1337,7 @@ generated   : {time.strftime("%Y-%m-%dT%H:%M:%S")}
 # ─── MAIN LOOP ──────────────────────────────────────────────
 def run_experiment_loop(n_experiments=20, objective="recall"):
 
+    global CACHED_RESOURCES
     program_md = read_file("program.md")
 
     # ── Load full history from all previous runs ──
@@ -1152,6 +1358,7 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
 
     # Ensure results.tsv has correct header
     ensure_results_header()
+    audit_results_tsv() 
 
     print("=" * 60)
     print("AUTORESEARCH — Search System Optimizer")
@@ -1191,12 +1398,13 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 print(f"   ⚠️  Seed profile {seed_path} not found — using current search.py")
 
     print("\n📦 Preloading resources...")
-    global CACHED_RESOURCES
     CACHED_RESOURCES = load_resources()
     
     # ── Baseline — measure what's on disk right now ──
     print("\n📊 Running baseline...")
-    baseline_recall, baseline_latency = run_eval()
+    baseline_recall, baseline_latency, baseline_slices, baseline_full_metrics, baseline_per_query, baseline_p95, baseline_p99, _ = run_eval()
+    current_slices = baseline_slices 
+    current_per_query = baseline_per_query 
     baseline_metrics = {
     "recall":       baseline_recall,
     "latency_ms":   baseline_latency,
@@ -1228,7 +1436,8 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         save_experiment(
             "exp_000", objective, "", read_file("search.py"),
             baseline_metrics, "keep", "baseline",
-            constraint_trace={}  # no gate was applied, explicitly empty
+            constraint_trace={},  # no gate was applied, explicitly empty
+            full_metrics=baseline_full_metrics,
         )
         history.append({
             "description": "baseline",
@@ -1260,19 +1469,23 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         print("\n🤖 Asking agent...")
         try:
             new_code, llm_cost, description, prompt = ask_agent(
-                program_md, current_search_py, history, objective
+                program_md, current_search_py, history, objective, per_query_diagnostics=current_per_query
             )
         except Exception as e:
             print(f"Agent error: {e}")
             continue
 
         print(f"Trying       : {description}  (api cost: ${llm_cost:.6f})")
+
+        # prev_query_results already held in current_per_query — no extra retrieval pass
+        prev_query_results = current_per_query
+
         write_file("search.py", new_code)
 
         # Benchmark
         print("Running benchmark...")
         try:
-            new_recall, new_latency = run_eval()
+            new_recall, new_latency, new_slices, new_full_metrics, new_per_query, new_p95, new_p99, recall_noise = run_eval()
                     
         except Exception as e:
 
@@ -1360,26 +1573,39 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         new_metrics = {
             "recall":       new_recall,
             "latency_ms":   new_latency,
-            "llm_cost_usd": llm_cost
+            "latency_p95":  new_p95,
+            "latency_p99":  new_p99,
+            "llm_cost_usd": llm_cost,
+            "mrr":          new_full_metrics["mrr"],
+            "ndcg":         new_full_metrics["ndcg"],
+            "precision":    new_full_metrics["precision"],
+            "top1":         new_full_metrics["top1"],
         }
 
         print(f"recall@10    : {new_recall:.6f}")
         print(f"latency      : {new_latency:.1f}ms")
         print(f"llm_cost     : ${llm_cost:.6f}")
 
-        improved, constraint_trace = is_improvement(new_metrics, best_metrics, objective)
+        improved, constraint_trace = is_improvement(
+            new_metrics,
+            best_metrics,
+            objective,
+            recall_noise=recall_noise
+        )
 
         if improved:
             commit = git_commit(f"experiment: {description}")
             log_result(exp_id, commit, new_metrics, "keep", description)
             save_experiment(exp_id, objective, prompt, new_code, new_metrics, "keep", description,
-                constraint_trace=constraint_trace)
+                constraint_trace=constraint_trace, slice_results=new_slices, full_metrics=new_full_metrics)
             passed = [k for k, v in constraint_trace.items() if v]
             print(f"✅ KEEP — objective='{objective}'  passed={passed}")
             kept_any = True
 
             # ── Auto-update search profile ──
             best_metrics = new_metrics.copy()
+            current_per_query = new_per_query 
+            current_slices    = new_slices          
             update_profile(objective, best_metrics, description) 
             history.append({
                 "description": description,
@@ -1398,6 +1624,17 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
                 exp_id=exp_id,
                 prompt_hash=saved_prompt_hash
             )
+            
+            # ── Regression report ──────────────────────────
+
+            report = regression_report(prev_query_results, new_per_query)
+
+            if report["regressions"]:
+                print(f"   ⚠️  {len(report['regressions'])} queries regressed:")
+                for r in report["regressions"]:
+                    print(f"      '{r['query'][:60]}'  {r['before']:.2f} → {r['after']:.2f}  (Δ{r['delta']:.2f})")
+            else:
+                print(f"   ✅ No regressions — {report['net']} net query improvements")
 
         else:
             git_restore()
@@ -1425,13 +1662,16 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         None
     )
 
-    if latest_kept:
-
+    # AFTER
+    if latest_kept and latest_kept["metrics"]["recall"] >= RECALL_FLOOR:
         update_profile(
             objective,
             latest_kept["metrics"],
             latest_kept["description"]
         )
+    elif latest_kept:
+        print(f"   ⚠️  Skipping final profile sync — "
+            f"latest kept recall {latest_kept['metrics']['recall']:.3f} below floor")
 
     # ── Document final architecture only if promotion occurred ──
 
@@ -1492,6 +1732,13 @@ def run_experiment_loop(n_experiments=20, objective="recall"):
         f"latency={final_metrics['latency_ms']:.1f}ms  "
         f"cost={cost_str}"
     )
+
+    # ── Final slice breakdown ──
+    if kept_any:
+        print("\nRecall by slice (dev set):")
+        for slice_name, slice_recall in sorted(current_slices.items()):
+            print(f"  {slice_name:<15}: {slice_recall:.3f}")
+    
     print(f"\nFull log     : results.tsv")
     print(f"Replay log   : experiments/log.jsonl")
     print(f"Prompts      : experiments/prompts/")
@@ -1543,15 +1790,21 @@ if __name__ == "__main__":
         replay_experiment(args.replay)
 
     elif args.export_profile:
-        recall, latency = run_eval()
+        recall, latency, _, _, _, _, _, _ = run_eval()
         metrics = {"recall": recall, "latency_ms": latency, "llm_cost_usd": 0.0}
         update_profile(args.export_profile, metrics, "manually exported")
         print(f"Exported search.py → search_profiles/{OBJECTIVE_TO_PROFILE[args.export_profile]}.py")
 
     elif args.eval_only:
-        recall, latency = run_eval()
-        print(f"recall@10    : {recall:.6f}")
-        print(f"latency      : {latency:.1f}ms")
+        recall, latency, slice_results, full_metrics, _, p95, p99, noise = run_eval()
+        print(f"recall@10    : {recall:.6f}  (noise ±{noise:.3f})")
+        print(f"latency p50  : {latency:.1f}ms")
+        print(f"latency p95  : {p95:.1f}ms")
+        print(f"latency p99  : {p99:.1f}ms")
+        print(f"mrr@10       : {full_metrics['mrr']:.6f}")
+        print(f"ndcg@10      : {full_metrics['ndcg']:.6f}")
+        print(f"precision@10 : {full_metrics['precision']:.6f}")
+        print(f"top1         : {full_metrics['top1']:.6f}")
 
     else:
         run_experiment_loop(n_experiments=args.n, objective=args.objective)
