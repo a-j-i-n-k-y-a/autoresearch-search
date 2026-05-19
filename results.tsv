@@ -185,3 +185,23 @@ exp_183	discarded	0.318182	23.3	26.1	28.4	0.001108	discard	Latency-optimized ret
 exp_184	discarded	0.318182	23.6	26.5	28.0	0.001180	discard	Latency-optimized hybrid retrieval using a focused candidate pool, pre-computed BM25 scores, and a lightweight, vectorized ranking pipeline.
 exp_185	crash	0.000000	inf			0.001127	crash	optimized latency by streamlining hybrid scoring and utilizing vectorized NumPy operations on a unified candidate pool
 exp_186	discarded	0.318182	23.5	26.8	27.1	0.001122	discard	Use a single-pass hybrid ranking with pre-indexed BM25 scores and normalized vector distances to reduce dataframe overhead and latency.
+exp_187	0dc7372	0.636364	23.4	30.0	37.1	0.001152	keep	latency optimization using pre-filtered candidate pool and direct indexing with minimal dataframe operations
+exp_188	discarded	0.318182	23.4	26.1	27.2	0.001131	discard	Optimize latency by using a combined retrieval pool size of 200, simplifying scoring via vectorized addition of BM25 and normalized distance, and reducing DataFrame operations by using column indexing.
+exp_189	discarded	0.318182	23.3	27.1	27.8	0.001151	discard	improve latency by using optimized array indexing and batching, while maintaining recall with genre-boosted scores
+exp_190	discarded	0.272727	23.8	27.9	73.0	0.001148	discard	reduce latency by pre-allocating index lookups and simplifying hybrid score fusion logic
+exp_191	discarded	0.590909	23.6	26.9	27.5	0.001147	discard	optimize latency by using a streamlined candidate union and reduced feature overhead
+exp_192	discarded	0.636364	23.7	26.6	27.5	0.001158	discard	Optimize latency by using a smaller initial candidate pool, simplified feature-vector scoring, and reducing redundant dataframe operations.
+exp_193	crash	0.000000	inf			0.001130	crash	optimize latency by using local indexing and vectorized hybrid scoring
+exp_194	discarded	0.500000	23.0	26.3	28.9	0.001181	discard	optimize latency by using a streamlined candidate pool of 250, direct array indexing, and simplified feature-weighted fusion
+exp_195	discarded	0.590909	23.0	26.6	27.4	0.001190	discard	Optimize latency by using a streamlined candidate pool of 200, simplifying scoring via vectorized addition of BM25 and normalized distance, and reducing DataFrame operations by using direct array indexing.
+exp_196	discarded	0.681818	23.1	28.6	37.5	0.001172	discard	Optimize latency by using a streamlined candidate pool of 200, simplifying BM25 and vector score fusion, and using vectorized numpy operations to minimize overhead.
+exp_197	discarded	0.318182	23.7	26.1	26.7	0.001180	discard	latency-optimized retrieval using cached BM25 and vectorized genre-boosted ranking on a unified candidate pool
+exp_198	discarded	0.272727	23.9	28.5	35.0	0.001171	discard	optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks to avoid redundant dataframe operations during ranking
+exp_199	discarded	0.409091	23.6	27.2	28.8	0.001189	discard	optimize latency by using local NumPy arrays, cached BM25 scores, and a lightweight weighted ranking pipeline without intermediate dataframe filtering
+exp_200	discarded	0.454545	23.3	28.3	34.2	0.001194	discard	optimize latency by using a streamlined candidate selection and direct array-based scoring to eliminate redundant dataframe processing
+exp_201	discarded	0.409091	23.4	26.3	27.8	0.001236	discard	optimize latency by using a combined 250 candidate pool with direct numpy array indexing and simplified scoring without pandas iloc or copy operations
+exp_202	discarded	0.318182	23.0	26.2	26.7	0.001176	discard	Refactor scoring to use direct numpy indexing and vectorized operations, avoiding pandas overhead and optimizing memory usage for cost efficiency.
+exp_203	discarded	0.545455	29.9	32.6	33.9	0.001227	discard	Use balanced RRF with popularity-weighted genre boost to improve retrieval recall and ranking stability.
+exp_204	discarded	0.227273	23.6	26.6	27.4	0.001194	discard	Use a larger candidate pool of 400 for hybrid retrieval with genre-overlap boosting and direct NumPy score normalization.
+exp_205	discarded	0.318182	22.9	27.7	32.6	0.001188	discard	implement genre-aware query expansion for hybrid search and streamline the candidate pool scoring pipeline
+exp_206	discarded	0.636364	28.5	35.5	106.5	0.001220	discard	implement genre-aware query expansion and weight fusion with popularity dampening

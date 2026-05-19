@@ -6095,3 +6095,652 @@
   "full_metrics": {}
 }
 
+{
+  "exp_id": "exp_187",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:48:38",
+  "prompt_hash": "5005fad1",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Efficiently retrieve candidates (pool size 250 for balance)\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Merge candidates\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Normalize scores locally\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Map vector distances\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([dist_map.get(i, 5.0) for i in candidates])\n    s_s = 1.0 / (1.0 + s_s)\n    \n    # Metadata signals\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Simple weighted fusion\n    final_scores = (0.4 * s_b) + (0.5 * s_s) + (0.1 * pop)\n    \n    # Direct sort and slice\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 23.40341592207551,
+    "latency_p95": 29.982040636241436,
+    "latency_p99": 37.052541971206665,
+    "llm_cost_usd": 0.001152,
+    "mrr": 0.470563,
+    "ndcg": 0.465462,
+    "precision": 0.118182,
+    "top1": 0.272727
+  },
+  "status": "keep",
+  "description": "latency optimization using pre-filtered candidate pool and direct indexing with minimal dataframe operations",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true
+  },
+  "slice_results": {
+    "exact_title": 1.0,
+    "genre": 0.75,
+    "semantic": 0.666667,
+    "ambiguous": 0.0
+  },
+  "full_metrics": {
+    "recall": 0.636364,
+    "mrr": 0.470563,
+    "ndcg": 0.465462,
+    "precision": 0.118182,
+    "top1": 0.272727
+  }
+}
+
+{
+  "exp_id": "exp_188",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:48:43",
+  "prompt_hash": "3cdc7c2d",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Use top 200 for BM25 to match FAISS pool size\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    \n    # Merge candidates\n    candidates = np.union1d(idx_b, idx_s[0])\n    \n    # Compute scores using efficient numpy slicing\n    s_b = bm25_scores[candidates]\n    # Simple Min-Max normalization for BM25\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Map vector distances (lower is better, convert to proximity)\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Weighted fusion\n    final_scores = (0.45 * s_b) + (0.55 * s_s)\n    \n    # Sort and pick top K\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.44933385029435,
+    "latency_p95": 26.119125075638294,
+    "latency_p99": 27.23674988374114,
+    "llm_cost_usd": 0.001131,
+    "mrr": 0.177273,
+    "ndcg": 0.186108,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "Optimize latency by using a combined retrieval pool size of 200, simplifying scoring via vectorized addition of BM25 and normalized distance, and reducing DataFrame operations by using column indexing.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_189",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:48:48",
+  "prompt_hash": "ac83b9fd",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve candidates\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Use top 250 from BM25 and 250 from FAISS\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Efficient score calculation\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Vector distances\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Genre boost: simple binary check for better specificity\n    genre_col = df['genres'].iloc[candidates].values\n    has_genre = np.array([any(g in str(g_row) for g in tokens) for g_row in genre_col], dtype=float)\n    \n    # Final weighted score\n    final_scores = (0.35 * s_b) + (0.45 * s_s) + (0.2 * has_genre)\n    \n    # Sorting\n    top_n = np.argsort(final_scores)[-top_k:][::-1]\n    res_indices = candidates[top_n]\n    \n    res = df.iloc[res_indices].copy()\n    res['score'] = final_scores[top_n]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.314416874200106,
+    "latency_p95": 27.135625015944242,
+    "latency_p99": 27.837667148560286,
+    "llm_cost_usd": 0.001151,
+    "mrr": 0.14697,
+    "ndcg": 0.164718,
+    "precision": 0.063636,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "improve latency by using optimized array indexing and batching, while maintaining recall with genre-boosted scores",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_190",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:48:53",
+  "prompt_hash": "7cfa91fe",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Pool size 200 balances recall and latency\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Fast unique candidate gathering\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Normalized BM25 scores\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Vector score normalization\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Simple genre presence boost\n    genre_boost = np.array([0.1 if query.lower() in g.lower() else 0.0 for g in df['genres'].iloc[candidates]])\n    \n    # Simplified fusion\n    final_scores = (0.4 * s_b) + (0.5 * s_s) + (0.1 * genre_boost)\n    \n    # Get top_k indices efficiently\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    # Build result records\n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.272727,
+    "latency_ms": 23.760917130857706,
+    "latency_p95": 27.8949998319149,
+    "latency_p99": 72.97258405014873,
+    "llm_cost_usd": 0.001148,
+    "mrr": 0.124242,
+    "ndcg": 0.140712,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "reduce latency by pre-allocating index lookups and simplifying hybrid score fusion logic",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_191",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:48:59",
+  "prompt_hash": "a281748b",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Use partition to get top candidates quickly\n    idx_b = np.argpartition(bm25_scores, -150)[-150:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 150)\n    \n    # Union indices and map scores\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Normalize BM25 scores\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Invert and normalize distances\n    dist_map = dict(zip(idx_s[0], dists[0]))\n    s_s = np.array([dist_map.get(i, 5.0) for i in candidates])\n    s_s = 1.0 / (1.0 + s_s)\n    \n    # Lightweight popularity boost\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Weighted fusion\n    final_scores = (0.35 * s_b) + (0.55 * s_s) + (0.10 * pop)\n    \n    # Rank and slice\n    top_n = np.argsort(final_scores)[-top_k:][::-1]\n    top_indices = candidates[top_n]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[top_n]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 23.626250214874744,
+    "latency_p95": 26.912041939795017,
+    "latency_p99": 27.453875169157982,
+    "llm_cost_usd": 0.001147,
+    "mrr": 0.427273,
+    "ndcg": 0.422209,
+    "precision": 0.118182,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize latency by using a streamlined candidate union and reduced feature overhead",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": true,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_192",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:04",
+  "prompt_hash": "3deaa071",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # 1. Retrieve candidates\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -150)[-150:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 150)\n    \n    # 2. Combine unique candidates\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # 3. Fast feature lookup\n    # Normalize BM25\n    b_scores = bm25_scores[candidates]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    # Normalize Distance (1 / (1 + L2))\n    s_scores = np.zeros(len(candidates))\n    mask = np.isin(candidates, idx_s[0])\n    # Mapping vector distances\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_scores[mask] = 1.0 / (1.0 + np.array([dist_map.get(i, 5.0) for i in candidates[mask]]))\n    \n    # Simple popularity boost\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # 4. Fusion\n    final_scores = (0.5 * b_scores) + (0.4 * s_scores) + (0.1 * pop)\n    \n    # 5. Extract top k\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 23.718209005892277,
+    "latency_p95": 26.624583639204502,
+    "latency_p99": 27.45945891365409,
+    "llm_cost_usd": 0.001158,
+    "mrr": 0.454545,
+    "ndcg": 0.457447,
+    "precision": 0.118182,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "Optimize latency by using a smaller initial candidate pool, simplified feature-vector scoring, and reducing redundant dataframe operations.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_193",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:07",
+  "prompt_hash": "bce0f214",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve candidates from both sources\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Merge using unique indices\n    candidates = np.union1d(idx_b, idx_s[0])\n    \n    # Get scores for candidates\n    s_b = bm25_scores[candidates]\n    # Fast distance-to-similarity\n    s_s = 1.0 / (1.0 + dists[0][np.searchsorted(idx_s[0], candidates)])\n    \n    # Normalize with minimal ops\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    s_s = (s_s - s_s.min()) / (s_s.max() - s_s.min() + 1e-9)\n    \n    # Weighted fusion (prioritize vector for semantic depth, BM25 for title precision)\n    final_scores = 0.45 * s_b + 0.55 * s_s\n    \n    # Sort and slice\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": Infinity,
+    "llm_cost_usd": 0.00113
+  },
+  "status": "crash",
+  "description": "optimize latency by using local indexing and vectorized hybrid scoring",
+  "constraint_trace": {
+    "crashed_before_gate": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_194",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:12",
+  "prompt_hash": "9ac7e9e1",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve BM25 scores and top candidates\n    bm25_scores = bm25.get_scores(_bm25_tokenize(query))\n    \n    # Efficient retrieval from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Consolidate pool (BM25 top 250 + FAISS top 250)\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Calculate scores on candidate subset only\n    s_b = bm25_scores[candidates]\n    # Min-max normalization for BM25\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Map vector distances (FAISS L2 dists)\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Use log-transformed vote count for popularity\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Weighted fusion\n    final_scores = (0.45 * s_b) + (0.45 * s_s) + (0.1 * pop)\n    \n    # Slice top results\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 22.950750309973955,
+    "latency_p95": 26.295749936252832,
+    "latency_p99": 28.88166718184948,
+    "llm_cost_usd": 0.001181,
+    "mrr": 0.331313,
+    "ndcg": 0.343769,
+    "precision": 0.1,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize latency by using a streamlined candidate pool of 250, direct array indexing, and simplified feature-weighted fusion",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_195",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:17",
+  "prompt_hash": "dc293e25",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Efficiently retrieve candidates\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Merge candidates via indices\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Vectorized score fusion\n    # BM25 score component\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # FAISS distance component\n    dist_map = dict(zip(idx_s[0], dists[0]))\n    s_s = np.array([dist_map.get(i, 10.0) for i in candidates])\n    s_s = 1.0 / (1.0 + s_s)\n    \n    # Metadata boost (popularity)\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Final fusion\n    final_scores = (0.45 * s_b) + (0.45 * s_s) + (0.10 * pop)\n    \n    # Top K extraction\n    partitioned = np.argpartition(final_scores, -top_k)[-top_k:]\n    top_indices = candidates[partitioned]\n    top_scores = final_scores[partitioned]\n    \n    # Final sorting\n    order = np.argsort(top_scores)[::-1]\n    res = df.iloc[top_indices[order]].copy()\n    res['score'] = top_scores[order]\n    \n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 23.032959084957838,
+    "latency_p95": 26.618833653628826,
+    "latency_p99": 27.376499958336353,
+    "llm_cost_usd": 0.00119,
+    "mrr": 0.460101,
+    "ndcg": 0.440366,
+    "precision": 0.109091,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "Optimize latency by using a streamlined candidate pool of 200, simplifying scoring via vectorized addition of BM25 and normalized distance, and reducing DataFrame operations by using direct array indexing.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_196",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:23",
+  "prompt_hash": "29f5d8c7",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # BM25 Retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    \n    # Vector Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Merge candidates\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Normalize BM25\n    s_b = bm25_scores[candidates]\n    s_b_min, s_b_max = s_b.min(), s_b.max()\n    s_b = (s_b - s_b_min) / (s_b_max - s_b_min + 1e-9)\n    \n    # Vector Distance to Score\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Popularity signal\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Weighted fusion\n    final_scores = (0.4 * s_b) + (0.5 * s_s) + (0.1 * pop)\n    \n    # Rank and slice\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.681818,
+    "latency_ms": 23.09562498703599,
+    "latency_p95": 28.578500263392925,
+    "latency_p99": 37.525166757404804,
+    "llm_cost_usd": 0.001172,
+    "mrr": 0.438636,
+    "ndcg": 0.462328,
+    "precision": 0.136364,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "Optimize latency by using a streamlined candidate pool of 200, simplifying BM25 and vector score fusion, and using vectorized numpy operations to minimize overhead.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": true,
+    "recall_ok": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_197",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:29",
+  "prompt_hash": "e35cd180",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Candidate consolidation\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Vectorized score preparation\n    b_scores = bm25_scores[candidates]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    # Map vector distances (using 1/(1+d) for similarity)\n    dist_map = np.full(len(df), 5.0, dtype=np.float32)\n    dist_map[idx_s[0]] = dists[0]\n    s_scores = 1.0 / (1.0 + dist_map[candidates])\n    \n    # Genre boost: simple binary check if any word in query matches genre string\n    # We pre-calculate genre strings to lowercase for faster comparison\n    q_lower = query.lower()\n    genre_col = df['genres'].iloc[candidates].values\n    genre_boost = np.array([0.1 if any(g in q_lower for g in str(gen).lower().split('|')) else 0.0 for gen in genre_col])\n    \n    # Final fused score\n    final_scores = (0.4 * b_scores) + (0.5 * s_scores) + genre_boost\n    \n    # Sort\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.66129169240594,
+    "latency_p95": 26.09162498265505,
+    "latency_p99": 26.714084204286337,
+    "llm_cost_usd": 0.00118,
+    "mrr": 0.124242,
+    "ndcg": 0.162901,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "latency-optimized retrieval using cached BM25 and vectorized genre-boosted ranking on a unified candidate pool",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_198",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:34",
+  "prompt_hash": "5653cb1d",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Use partition to identify top candidates efficiently\n    pool_size = 250\n    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, pool_size)\n    \n    # Union of indices\n    candidates = np.union1d(idx_b, idx_s[0])\n    \n    # Localized scoring\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Vector distances\n    dist_map = dict(zip(idx_s[0], dists[0]))\n    s_s = np.array([dist_map.get(i, 1.0) for i in candidates])\n    s_s = 1.0 / (1.0 + s_s)\n    \n    # Genre signal: pre-extract genres as a simple lookup or sparse array if possible, \n    # but here using boolean vectorized check on the subset\n    # Avoiding heavy DF operations\n    genres = df['genres'].iloc[candidates].values\n    genre_boost = np.array([0.1 if any(g.lower() in query.lower() for g in str(gs).split(',')) else 0.0 for gs in genres])\n    \n    final_scores = (0.45 * s_b) + (0.45 * s_s) + (0.1 * genre_boost)\n    \n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.272727,
+    "latency_ms": 23.89212464913726,
+    "latency_p95": 28.52137526497245,
+    "latency_p99": 34.95925012975931,
+    "llm_cost_usd": 0.001171,
+    "mrr": 0.112879,
+    "ndcg": 0.13429,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks to avoid redundant dataframe operations during ranking",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_199",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:40",
+  "prompt_hash": "4d92fc90",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve candidates (250 is stable for recall/latency)\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Union indices and map scores\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Calculate scores on local arrays to avoid repeated df lookups\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Map L2 distances to [0,1]\n    s_s = np.full(len(candidates), 0.0)\n    for i, idx in enumerate(idx_s[0]):\n        mask = (candidates == idx)\n        if mask.any():\n            s_s[mask] = 1.0 / (1.0 + dists[0][i])\n    \n    # Add minor popularity bias from pre-indexed column\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)\n    \n    # Weighted score fusion\n    final_scores = (0.5 * s_b) + (0.45 * s_s) + (0.05 * pop)\n    \n    # Get top_k indices\n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    # Construct results\n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 23.638082668185234,
+    "latency_p95": 27.197249699383974,
+    "latency_p99": 28.835417237132788,
+    "llm_cost_usd": 0.001189,
+    "mrr": 0.259091,
+    "ndcg": 0.267957,
+    "precision": 0.072727,
+    "top1": 0.090909
+  },
+  "status": "discard",
+  "description": "optimize latency by using local NumPy arrays, cached BM25 scores, and a lightweight weighted ranking pipeline without intermediate dataframe filtering",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_200",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:45",
+  "prompt_hash": "d4f2c362",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Use 200 candidates for a balance of speed and recall\n    pool_size = 200\n    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, pool_size)\n    \n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Calculate scores on the pooled candidates using numpy arrays directly\n    # BM25 MinMax scaling\n    b_scores = bm25_scores[candidates]\n    b_min, b_max = b_scores.min(), b_scores.max()\n    s_b = (b_scores - b_min) / (b_max - b_min + 1e-9)\n    \n    # FAISS distance conversion\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Popularity signal: use direct column lookup\n    vote_counts = df['vote_count'].values[candidates]\n    pop = np.log1p(vote_counts)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Hybrid fusion\n    final_scores = (0.4 * s_b) + (0.5 * s_s) + (0.1 * pop)\n    \n    # Identify top K indices\n    top_n = np.argsort(final_scores)[-top_k:][::-1]\n    top_indices = candidates[top_n]\n    \n    # Create result with direct iloc and scoring\n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[top_n]\n    \n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.454545,
+    "latency_ms": 23.27479189261794,
+    "latency_p95": 28.282708954066038,
+    "latency_p99": 34.23704206943512,
+    "llm_cost_usd": 0.001194,
+    "mrr": 0.329545,
+    "ndcg": 0.320899,
+    "precision": 0.090909,
+    "top1": 0.090909
+  },
+  "status": "discard",
+  "description": "optimize latency by using a streamlined candidate selection and direct array-based scoring to eliminate redundant dataframe processing",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_201",
+  "objective": "latency",
+  "timestamp": "2026-05-19T13:49:51",
+  "prompt_hash": "edf543b5",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Pre-fetch candidate indices using BM25 and FAISS\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Merge candidates\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Map vector distances: lower distance is better\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([dist_map.get(i, 5.0) for i in candidates])\n    s_s = 1.0 / (1.0 + s_s)\n    \n    # Use pre-extracted numpy arrays to avoid DataFrame overhead\n    # We use pre-computed arrays from memory if possible, but access columns directly\n    s_b = bm25_scores[candidates]\n    pop = np.log1p(df['vote_count'].values[candidates])\n    \n    # Min-max normalization for fusion\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    s_s = (s_s - s_s.min()) / (s_s.max() - s_s.min() + 1e-9)\n    pop = (pop - pop.min()) / (pop.max() - pop.min() + 1e-9)\n    \n    # Weighted fusion\n    final_scores = (0.35 * s_b) + (0.55 * s_s) + (0.10 * pop)\n    \n    # Get top_k indices\n    partitioned = np.argpartition(final_scores, -top_k)[-top_k:]\n    top_indices = candidates[partitioned]\n    top_scores = final_scores[partitioned]\n    \n    # Sort the top_k results\n    order = np.argsort(top_scores)[::-1]\n    res_indices = top_indices[order]\n    \n    # Construct results\n    result_df = df.iloc[res_indices].copy()\n    result_df['score'] = top_scores[order]\n    \n    return result_df.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 23.40454189106822,
+    "latency_p95": 26.334666647017002,
+    "latency_p99": 27.758999727666378,
+    "llm_cost_usd": 0.001236,
+    "mrr": 0.358586,
+    "ndcg": 0.323627,
+    "precision": 0.072727,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "optimize latency by using a combined 250 candidate pool with direct numpy array indexing and simplified scoring without pandas iloc or copy operations",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_202",
+  "objective": "cost",
+  "timestamp": "2026-05-19T13:51:20",
+  "prompt_hash": "479aa6bd",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # BM25 Retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Semantic Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 300)\n    \n    # Candidate selection\n    bm25_top_idx = np.argpartition(bm25_scores, -300)[-300:]\n    candidate_indices = np.unique(np.concatenate([bm25_top_idx, idxs[0]]))\n    \n    # Scoring\n    # Use numpy directly for efficiency\n    c_bm25 = bm25_scores[candidate_indices]\n    c_bm25 = (c_bm25 - c_bm25.min()) / (c_bm25.max() - c_bm25.min() + 1e-9)\n    \n    # Semantic similarity: map FAISS results\n    idx_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    c_semantic = np.array([idx_map.get(i, 0.0) for i in candidate_indices])\n    \n    # Extract needed columns as arrays to avoid dataframe overhead\n    vote_counts = df['vote_count'].values[candidate_indices]\n    \n    # Final score: balanced hybrid\n    final_scores = (0.5 * c_bm25) + (0.5 * c_semantic)\n    \n    # Get top_k indices\n    top_indices_local = np.argsort(final_scores)[-top_k:][::-1]\n    top_indices = candidate_indices[top_indices_local]\n    \n    # Convert to dict at the very end\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 22.97829231247306,
+    "latency_p95": 26.19920764118433,
+    "latency_p99": 26.670791674405336,
+    "llm_cost_usd": 0.001176,
+    "mrr": 0.172727,
+    "ndcg": 0.183665,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "Refactor scoring to use direct numpy indexing and vectorized operations, avoiding pandas overhead and optimizing memory usage for cost efficiency.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_203",
+  "objective": "cost",
+  "timestamp": "2026-05-19T13:51:26",
+  "prompt_hash": "8f07cb96",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Increase pool size to 400 for better candidate recall\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -400)[-400:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 400)\n    \n    # RRF mapping\n    rrf_scores = {}\n    \n    # BM25 RRF\n    for rank, i in enumerate(idx_b):\n        rrf_scores[i] = rrf_scores.get(i, 0) + 1.0 / (60 + rank)\n        \n    # Semantic RRF\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] = rrf_scores.get(i, 0) + 1.0 / (60 + rank)\n        \n    candidate_indices = np.array(list(rrf_scores.keys()))\n    scores = np.array([rrf_scores[i] for i in candidate_indices])\n    \n    # Genre boost: identify genres in query\n    query_lower = query.lower()\n    genre_boost = np.zeros(len(candidate_indices))\n    for idx, i in enumerate(candidate_indices):\n        movie_genres = str(df['genres'].iloc[i]).lower()\n        if any(g in query_lower for g in movie_genres.split('|')):\n            genre_boost[idx] = 0.05\n            \n    # Popularity boost: log-scaled vote count\n    pop = np.log1p(df['vote_count'].iloc[candidate_indices].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    final_scores = scores + genre_boost + (0.01 * pop)\n    \n    # Slice top results\n    top_n = min(top_k, len(candidate_indices))\n    partition = np.argpartition(final_scores, -top_n)[-top_n:]\n    top_indices = candidate_indices[partition[np.argsort(final_scores[partition])[::-1]]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[partition[np.argsort(final_scores[partition])[::-1]]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 29.853499960154295,
+    "latency_p95": 32.587542198598385,
+    "latency_p99": 33.85479096323252,
+    "llm_cost_usd": 0.001227,
+    "mrr": 0.334957,
+    "ndcg": 0.373612,
+    "precision": 0.1,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "Use balanced RRF with popularity-weighted genre boost to improve retrieval recall and ranking stability.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "latency_ok": false,
+    "cost_improve": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_204",
+  "objective": "cost",
+  "timestamp": "2026-05-19T13:51:31",
+  "prompt_hash": "0993528b",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Increase pool size to 400 to improve recall coverage for long-tail/semantic queries\n    pool_size = 400\n    \n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, pool_size)\n    \n    # Merge candidates\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Extract candidate signals\n    bm25_vals = bm25_scores[candidates]\n    # Map vector distances (L2) to similarity\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    semantic_vals = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    \n    # Genre boost: count keyword overlap in genre string\n    genre_str = df['genres'].iloc[candidates].values\n    genre_boost = np.array([sum(1 for t in tokens if t in g.lower()) for g in genre_str])\n    \n    # Normalize scores to 0-1 range\n    def norm(x):\n        return (x - x.min()) / (x.max() - x.min() + 1e-9)\n    \n    final_scores = 0.35 * norm(bm25_vals) + 0.5 * norm(semantic_vals) + 0.15 * norm(genre_boost)\n    \n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.227273,
+    "latency_ms": 23.64566596224904,
+    "latency_p95": 26.635458227247,
+    "latency_p99": 27.434292249381542,
+    "llm_cost_usd": 0.001194,
+    "mrr": 0.126623,
+    "ndcg": 0.129703,
+    "precision": 0.045455,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "Use a larger candidate pool of 400 for hybrid retrieval with genre-overlap boosting and direct NumPy score normalization.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_205",
+  "objective": "cost",
+  "timestamp": "2026-05-19T13:51:37",
+  "prompt_hash": "9f5a0888",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve candidates\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -300)[-300:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Pre-calculate scores\n    b_scores = bm25_scores[candidates]\n    b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min() + 1e-9)\n    \n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_scores = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])\n    s_scores = (s_scores - s_scores.min()) / (s_scores.max() - s_scores.min() + 1e-9)\n    \n    # Genre signal: prioritize if query mentions genre keywords\n    genres = df['genres'].iloc[candidates].values\n    genre_boost = np.array([1.1 if any(g.lower() in query.lower() for g in genre.split('|')) else 1.0 for genre in genres])\n    \n    # Combined score\n    final_scores = (0.45 * b_scores + 0.45 * s_scores) * genre_boost\n    \n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 22.94366667047143,
+    "latency_p95": 27.703833300620317,
+    "latency_p99": 32.62941585853696,
+    "llm_cost_usd": 0.001188,
+    "mrr": 0.212121,
+    "ndcg": 0.21874,
+    "precision": 0.054545,
+    "top1": 0.090909
+  },
+  "status": "discard",
+  "description": "implement genre-aware query expansion for hybrid search and streamline the candidate pool scoring pipeline",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_206",
+  "objective": "cost",
+  "timestamp": "2026-05-19T13:51:42",
+  "prompt_hash": "d67a04cf",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve candidates\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -300)[-300:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # Normalize BM25\n    s_b = bm25_scores[candidates]\n    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)\n    \n    # Normalize Semantic\n    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}\n    s_s = np.array([dist_map.get(i, 5.0) for i in candidates])\n    s_s = 1.0 / (1.0 + s_s)\n    s_s = (s_s - s_s.min()) / (s_s.max() - s_s.min() + 1e-9)\n    \n    # Popularity signal: use log1p to dampen vote count\n    pop = np.log1p(df['vote_count'].iloc[candidates].values)\n    pop = (pop - pop.mean()) / (pop.std() + 1e-9)\n    \n    # Genre signal: binary match\n    genre_match = np.array([1.0 if any(g.lower() in query.lower() for g in df['genres'].iloc[i].split('|')) else 0.0 for i in candidates])\n    \n    # Combined score\n    final_scores = (0.35 * s_b) + (0.45 * s_s) + (0.10 * pop) + (0.10 * genre_match)\n    \n    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    res = df.iloc[top_indices].copy()\n    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]\n    return res.to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 28.49991712719202,
+    "latency_p95": 35.478000063449144,
+    "latency_p99": 106.49554198607802,
+    "llm_cost_usd": 0.00122,
+    "mrr": 0.407071,
+    "ndcg": 0.442853,
+    "precision": 0.118182,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "implement genre-aware query expansion and weight fusion with popularity dampening",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "latency_ok": false,
+    "cost_improve": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
