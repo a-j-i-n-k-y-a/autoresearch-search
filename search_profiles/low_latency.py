@@ -1,42 +1,43 @@
 import numpy as np
 from rank_bm25 import BM25Okapi
+import re
 
 def _bm25_tokenize(text):
-    import re
     return re.findall(r'\b\w\w+\b', text.lower())
 
 def search(query, df, bm25, model, index, top_k=10):
     tokens = _bm25_tokenize(query)
-    
-    # Efficiently retrieve candidates (pool size 250 for balance)
     bm25_scores = bm25.get_scores(tokens)
-    idx_b = np.argpartition(bm25_scores, -250)[-250:]
     
     query_vec = model.encode([query]).astype("float32")
-    dists, idx_s = index.search(query_vec, 250)
+    dists, idx_s = index.search(query_vec, 200)
     
-    # Merge candidates
-    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))
+    k = 60
+    rrf_scores = np.zeros(len(df))
     
-    # Normalize scores locally
-    s_b = bm25_scores[candidates]
-    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)
+    # Efficient BM25 retrieval
+    idx_b = np.argsort(bm25_scores)[-200:]
+    for rank, i in enumerate(idx_b[::-1]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Semantic retrieval
+    for rank, i in enumerate(idx_s[0]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Genre boost: identify candidates and apply mask
+    candidates = np.where(rrf_scores > 0)[0]
+    query_genres = [t for t in tokens if t in ["action", "comedy", "drama", "horror", "sci-fi", "thriller", "romance", "western", "crime"]]
     
-    # Map vector distances
-    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}
-    s_s = np.array([dist_map.get(i, 5.0) for i in candidates])
-    s_s = 1.0 / (1.0 + s_s)
+    if query_genres:
+        genres_col = df['genres'].values
+        for i in candidates:
+            genre_str = str(genres_col[i]).lower()
+            if any(g in genre_str for g in query_genres):
+                rrf_scores[i] *= 1.5
+                
+    # Popularity bias
+    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.01
     
-    # Metadata signals
-    pop = np.log1p(df['vote_count'].iloc[candidates].values)
-    pop = (pop - pop.mean()) / (pop.std() + 1e-9)
+    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]
     
-    # Simple weighted fusion
-    final_scores = (0.4 * s_b) + (0.5 * s_s) + (0.1 * pop)
-    
-    # Direct sort and slice
-    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]
-    
-    res = df.iloc[top_indices].copy()
-    res['score'] = final_scores[np.argsort(final_scores)[-top_k:][::-1]]
-    return res.to_dict("records")
+    return df.iloc[top_indices].to_dict("records")

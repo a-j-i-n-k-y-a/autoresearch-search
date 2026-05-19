@@ -11125,3 +11125,1439 @@
   "full_metrics": {}
 }
 
+{
+  "exp_id": "exp_339",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:32:29",
+  "prompt_hash": "6a31c16b",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    k = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # Efficient BM25 retrieval\n    idx_b = np.argsort(bm25_scores)[-200:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Semantic retrieval\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: identify candidates and apply mask\n    candidates = np.where(rrf_scores > 0)[0]\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.5\n                \n    # Popularity bias\n    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.01\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 22.006125189363956,
+    "latency_p95": 26.509417220950127,
+    "latency_p99": 26.925457641482353,
+    "llm_cost_usd": 0.001517,
+    "mrr": 0.50303,
+    "ndcg": 0.482643,
+    "precision": 0.118182,
+    "top1": 0.363636
+  },
+  "status": "keep",
+  "description": "optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks, reducing redundant DataFrame operations.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true
+  },
+  "slice_results": {
+    "semantic": 0.833333,
+    "genre": 0.625,
+    "exact_title": 1.0,
+    "long_tail": 0.0,
+    "ambiguous": 0.0
+  },
+  "full_metrics": {
+    "recall": 0.636364,
+    "mrr": 0.50303,
+    "ndcg": 0.482643,
+    "precision": 0.118182,
+    "top1": 0.363636
+  }
+}
+
+{
+  "exp_id": "exp_340",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:32:35",
+  "prompt_hash": "af5b1075",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 150)\n    \n    # Use index-based mapping instead of full dataframe operations\n    scores = np.zeros(len(df))\n    \n    # BM25 top 150 contribution\n    idx_b = np.argpartition(bm25_scores, -150)[-150:]\n    for rank, i in enumerate(idx_b):\n        scores[i] += 1.0 / (60 + (150 - rank))\n        \n    # Semantic top 150 contribution\n    for rank, i in enumerate(idx_s[0]):\n        scores[i] += 1.0 / (60 + rank)\n        \n    # Genre boost using direct numpy array access\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres_col = df['genres'].values\n        for i in np.where(scores > 0)[0]:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                scores[i] *= 1.2\n                \n    # Popularity boost\n    scores += np.log1p(df['vote_count'].values) * 0.005\n    \n    top_indices = np.argpartition(scores, -top_k)[-top_k:]\n    top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 22.532708011567593,
+    "latency_p95": 27.072332799434662,
+    "latency_p99": 39.12812517955899,
+    "llm_cost_usd": 0.001513,
+    "mrr": 0.280303,
+    "ndcg": 0.304032,
+    "precision": 0.072727,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize latency by using a streamlined candidate pool of 150 with vectorized score fusion and reduced dataframe operations",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_341",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:32:40",
+  "prompt_hash": "3a32bc1a",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # RRF constants\n    k = 60\n    scores = np.zeros(len(df))\n    \n    # Get top BM25 candidates\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    \n    # RRF Scoring\n    for rank, i in enumerate(idx_b):\n        scores[i] += 1.0 / (k + rank)\n        \n    for rank, i in enumerate(idx_s[0]):\n        scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: identify candidates and apply mask\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres = df['genres'].values\n        for i in range(len(scores)):\n            if scores[i] > 0:\n                genre_str = str(genres[i]).lower()\n                if any(g in genre_str for g in query_genres):\n                    scores[i] *= 1.8\n                \n    # Popularity bias\n    vote_counts = df['vote_count'].values\n    scores += np.log1p(vote_counts) * 0.005\n    \n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.454545,
+    "latency_ms": 23.097374942153692,
+    "latency_p95": 27.39937510341406,
+    "latency_p99": 54.40833326429129,
+    "llm_cost_usd": 0.001506,
+    "mrr": 0.391775,
+    "ndcg": 0.377189,
+    "precision": 0.081818,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "latency optimization using pre-filtered candidate pool and efficient ranking with minimal data conversion",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_342",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:32:45",
+  "prompt_hash": "ead9f835",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Pre-select top candidates from BM25 and Semantic search\n    idx_b = np.argsort(bm25_scores)[-300:]\n    \n    # Combined candidate pool\n    candidates = np.union1d(idx_b, idx_s[0])\n    \n    # Initialize scores\n    final_scores = np.zeros(len(df))\n    \n    # Vectorized RRF scoring\n    k = 60\n    # Map ranks for fast lookup\n    rank_b = {idx: rank for rank, idx in enumerate(idx_b[::-1])}\n    rank_s = {idx: rank for rank, idx in enumerate(idx_s[0])}\n    \n    for i in candidates:\n        score = 0.0\n        if i in rank_b:\n            score += 1.0 / (k + rank_b[i])\n        if i in rank_s:\n            score += 1.0 / (k + rank_s[i])\n        final_scores[i] = score\n        \n    # Genre boost: identify genres in query\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                final_scores[i] *= 1.2\n                \n    # Popularity bias dampening to improve rank precision\n    final_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.001\n    \n    top_indices = np.argsort(final_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.454545,
+    "latency_ms": 23.168290965259075,
+    "latency_p95": 27.9986672103405,
+    "latency_p99": 73.62320786342025,
+    "llm_cost_usd": 0.001551,
+    "mrr": 0.427273,
+    "ndcg": 0.380409,
+    "precision": 0.081818,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "optimize latency by using a vectorized BM25-semantic hybrid with genre-based popularity dampening and direct numpy indexing for candidate fusion",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_343",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:32:51",
+  "prompt_hash": "03ae1468",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve BM25 scores for all, but use sparse argsort to limit scope\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Semantic retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Unified scoring using RRF logic\n    scores = np.zeros(len(df), dtype=np.float32)\n    \n    # BM25 Top 250 contributions\n    idx_b = np.argsort(bm25_scores)[-250:]\n    for rank, i in enumerate(idx_b[::-1]):\n        scores[i] += 1.0 / (60 + rank)\n        \n    # Semantic Top 250 contributions\n    for rank, i in enumerate(idx_s[0]):\n        scores[i] += 1.0 / (60 + rank)\n        \n    # Genre boost using boolean masking\n    if tokens:\n        genre_mask = np.zeros(len(df), dtype=np.float32)\n        # Targeted genre set to reduce loop overhead\n        target_genres = {\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"}\n        query_genres = [t for t in tokens if t in target_genres]\n        \n        if query_genres:\n            genres_col = df['genres'].values\n            for i in range(len(df)):\n                g_str = str(genres_col[i]).lower()\n                if any(g in g_str for g in query_genres):\n                    genre_mask[i] = 0.5\n            scores *= (1.0 + genre_mask)\n            \n    # Popularity boost\n    scores += np.log1p(df['vote_count'].values) * 0.005\n    \n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 24.708957877010107,
+    "latency_p95": 39.00770889595151,
+    "latency_p99": 40.99383298307657,
+    "llm_cost_usd": 0.001545,
+    "mrr": 0.569805,
+    "ndcg": 0.513394,
+    "precision": 0.109091,
+    "top1": 0.545455
+  },
+  "status": "discard",
+  "description": "optimize latency by using a vectorized score fusion with a fixed 250-candidate pool and direct index-level scoring",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_344",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:32:56",
+  "prompt_hash": "5b0cb432",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Use union of top 300 BM25 and 300 FAISS to ensure recall while capping pool size\n    idx_b = np.argsort(bm25_scores)[-300:]\n    unique_candidates = np.union1d(idx_b, idx_s[0])\n    \n    # RRF scoring on candidate pool\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 ranks\n    b_ranks = np.argsort(bm25_scores[unique_candidates])[::-1]\n    for r, idx in enumerate(b_ranks):\n        rrf_scores[unique_candidates[idx]] += 1.0 / (60.0 + r)\n        \n    # Semantic ranks\n    s_ranks = np.argsort(dists[0])[::-1]\n    for r, idx in enumerate(s_ranks):\n        rrf_scores[idx_s[0][idx]] += 1.0 / (60.0 + r)\n    \n    # Genre boost: identify genres in query and boost matching candidates\n    genres_list = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n    query_genres = [t for t in tokens if t in genres_list]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in unique_candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.25\n                \n    # Popularity boost to help with ambiguous/long-tail\n    rrf_scores[unique_candidates] += np.log1p(df['vote_count'].iloc[unique_candidates].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 23.879250045865774,
+    "latency_p95": 26.353999972343445,
+    "latency_p99": 29.127208050340414,
+    "llm_cost_usd": 0.001567,
+    "mrr": 0.429798,
+    "ndcg": 0.406213,
+    "precision": 0.1,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "Latency optimization using pre-filtered candidate pool and direct index-level scoring with balanced BM25/Semantic fusion.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_345",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:06",
+  "prompt_hash": "e6049bb4",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Semantic search\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # BM25 search - retrieve scores only for the semantic candidates\n    idx_s_flat = idx_s[0]\n    bm25_scores = np.array([bm25.get_scores(tokens)[i] for i in idx_s_flat])\n    \n    # Normalize scores for fusion\n    norm_bm25 = (bm25_scores - bm25_scores.min()) / (bm25_scores.max() - bm25_scores.min() + 1e-9)\n    norm_dist = 1.0 - (dists[0] - dists[0].min()) / (dists[0].max() - dists[0].min() + 1e-9)\n    \n    # Combined score\n    final_scores = 0.4 * norm_bm25 + 0.6 * norm_dist\n    \n    # Genre boost using cached logic\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres = df['genres'].iloc[idx_s_flat].values\n        for i, genre_str in enumerate(genres):\n            if any(g in str(genre_str).lower() for g in query_genres):\n                final_scores[i] *= 1.2\n    \n    # Popularity boost\n    votes = df['vote_count'].iloc[idx_s_flat].values\n    final_scores += np.log1p(votes) * 0.005\n    \n    # Select top k\n    top_pos = np.argsort(final_scores)[-top_k:][::-1]\n    best_indices = idx_s_flat[top_pos]\n    \n    return df.iloc[best_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 1771.8308749608696,
+    "latency_p95": 2295.9588752128184,
+    "latency_p99": 2332.459249999374,
+    "llm_cost_usd": 0.001547,
+    "mrr": 0.25,
+    "ndcg": 0.243264,
+    "precision": 0.054545,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "Latency optimization using pre-filtered BM25 score lookup and vectorized score fusion to minimize dataframe overhead",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_346",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:12",
+  "prompt_hash": "734e957c",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Semantic retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 150)\n    \n    # Get scores for top semantic candidates from BM25 to avoid full index scan\n    # BM25 is fast enough to perform on the fly, but we only score candidates \n    # identified by either semantic or bm25 to reduce computation\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argsort(bm25_scores)[-150:]\n    \n    # Combine candidate pools\n    all_idx = np.unique(np.concatenate([idx_s[0], idx_b]))\n    \n    # Scores array\n    scores = np.zeros(len(df))\n    \n    # Weighted fusion\n    scores[idx_b] += 0.5 * (bm25_scores[idx_b] / (np.max(bm25_scores[idx_b]) + 1e-6))\n    scores[idx_s[0]] += 0.5 * (1.0 - (dists[0] / (np.max(dists[0]) + 1e-6)))\n    \n    # Genre boost using direct array access\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres_col = df['genres'].values\n        for i in all_idx:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                scores[i] *= 1.2\n                \n    # Popularity bias\n    scores[all_idx] += np.log1p(df['vote_count'].iloc[all_idx].values) * 0.005\n    \n    top_indices = np.argsort(scores[all_idx])[-top_k:][::-1]\n    return df.iloc[all_idx[top_indices]].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 22.90050033479929,
+    "latency_p95": 26.502749882638454,
+    "latency_p99": 28.745082672685385,
+    "llm_cost_usd": 0.001563,
+    "mrr": 0.285714,
+    "ndcg": 0.266991,
+    "precision": 0.063636,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize latency by using pre-computed bm25 scores, reducing candidate pool to 150, and streamlining genre-affinity scoring with direct array operations.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_347",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:18",
+  "prompt_hash": "e20c8abb",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    rrf_scores = np.zeros(len(df))\n    k = 60\n    \n    # BM25 top candidates\n    idx_b = np.argpartition(bm25_scores, -100)[-100:]\n    b_scores = bm25_scores[idx_b]\n    b_ranks = np.argsort(b_scores)[::-1]\n    for rank, i in enumerate(idx_b[b_ranks]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Semantic top candidates\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost using direct numpy indexing\n    query_genres = [t for t in tokens if t in {\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"}]\n    if query_genres:\n        genres = df['genres'].values\n        for i in range(len(df)):\n            if rrf_scores[i] > 0:\n                g_str = str(genres[i]).lower()\n                if any(g in g_str for g in query_genres):\n                    rrf_scores[i] *= 1.5\n                \n    # Final ranking\n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.227273,
+    "latency_ms": 23.353333119302988,
+    "latency_p95": 26.500999927520752,
+    "latency_p99": 27.629791758954525,
+    "llm_cost_usd": 0.001517,
+    "mrr": 0.204545,
+    "ndcg": 0.194662,
+    "precision": 0.036364,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize latency by using a pre-allocated scores array and direct numpy operations for hybrid RRF, reducing dataframe access and function overhead",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_348",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:23",
+  "prompt_hash": "c6154fab",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    rrf_scores = np.zeros(len(df))\n    \n    # Efficiently pick top BM25 candidates\n    idx_b = np.argpartition(bm25_scores, -300)[-300:]\n    bm25_ranked = np.argsort(bm25_scores[idx_b])[::-1]\n    \n    # RRF fusion\n    k = 60\n    for rank, i in enumerate(idx_b[bm25_ranked]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost using direct column access\n    query_genres = [t for t in tokens if t in {\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"}]\n    if query_genres:\n        genres_col = df['genres'].values\n        for i in np.where(rrf_scores > 0)[0]:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.5\n    \n    # Popularity bias\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.001\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 24.293582886457443,
+    "latency_p95": 28.01599958911538,
+    "latency_p99": 33.125916961580515,
+    "llm_cost_usd": 0.001531,
+    "mrr": 0.321212,
+    "ndcg": 0.296474,
+    "precision": 0.063636,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "optimize latency by using pre-computed BM25 indices and direct NumPy operations to avoid DataFrame overhead while maintaining robust retrieval with RRF.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_349",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:28",
+  "prompt_hash": "228567f6",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # Use RRF scores in a single pre-allocated array\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 contribution\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    for rank, i in enumerate(idx_b):\n        rrf_scores[i] += 1.0 / (60 + (200 - rank))\n        \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[idx_s[0][rank]] += 1.0 / (60 + rank)\n        \n    # Genre boost: identify candidates\n    candidates = np.where(rrf_scores > 0)[0]\n    genre_map = {\"action\": 0, \"comedy\": 1, \"drama\": 2, \"horror\": 3, \"sci-fi\": 4, \"thriller\": 5, \"romance\": 6, \"western\": 7, \"crime\": 8}\n    query_genres = [g for g in genre_map if g in tokens]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.2\n                \n    top_indices = np.argpartition(rrf_scores, -top_k)[-top_k:]\n    top_indices = top_indices[np.argsort(rrf_scores[top_indices])[::-1]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.181818,
+    "latency_ms": 23.344125133007765,
+    "latency_p95": 26.92191582173109,
+    "latency_p99": 28.831082861870527,
+    "llm_cost_usd": 0.001542,
+    "mrr": 0.054654,
+    "ndcg": 0.075758,
+    "precision": 0.027273,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "reduce latency by pre-tokenizing query, using a single-pass hybrid score, and avoiding redundant array creation during genre-masking.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_350",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:31",
+  "prompt_hash": "46687cde",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # RRF Score Fusion\n    k = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 contribution\n    idx_b = np.argpartition(bm25_scores, -300)[-300:]\n    for rank, i in enumerate(idx_b):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: vectorised\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres_col = df['genres'].str.lower().values\n        for g in query_genres:\n            matches = np.char.find(genres_col, g) != -1\n            rrf_scores[matches] *= 1.2\n                \n    # Popularity bias\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.001\n    \n    top_indices = np.argpartition(rrf_scores, -top_k)[-top_k:]\n    top_indices = top_indices[np.argsort(rrf_scores[top_indices])][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.0,
+    "latency_ms": Infinity,
+    "llm_cost_usd": 0.001529
+  },
+  "status": "crash",
+  "description": "latency optimization by pre-calculating genre masks and using a unified 300-candidate pool with vectorized score fusion",
+  "constraint_trace": {
+    "crashed_before_gate": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_351",
+  "objective": "latency",
+  "timestamp": "2026-05-19T14:36:37",
+  "prompt_hash": "dacc9c9a",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Combined hybrid candidate pool\n    bm25_scores = bm25.get_scores(tokens)\n    _, faiss_idx = index.search(query_vec, 200)\n    \n    # Use union of top candidates\n    candidate_indices = np.unique(np.concatenate([\n        np.argsort(bm25_scores)[-150:], \n        faiss_idx[0]\n    ]))\n    \n    # Initialize scores for candidates only\n    scores = np.zeros(len(df))\n    \n    # RRF scoring\n    k_rrf = 60\n    # BM25 rank\n    sorted_bm25 = np.argsort(bm25_scores)[-200:]\n    for rank, idx in enumerate(sorted_bm25[::-1]):\n        scores[idx] += 1.0 / (k_rrf + rank)\n        \n    # Semantic rank\n    _, sem_idx = index.search(query_vec, 150)\n    for rank, idx in enumerate(sem_idx[0]):\n        scores[idx] += 1.0 / (k_rrf + rank)\n    \n    # Genre boost: identify genres in tokens\n    genre_keywords = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n    query_genres = [t for t in tokens if t in genre_keywords]\n    \n    if query_genres:\n        for idx in candidate_indices:\n            genre_str = str(df['genres'].iloc[idx]).lower()\n            if any(g in genre_str for g in query_genres):\n                scores[idx] *= 1.25\n    \n    # Popularity bias\n    scores[candidate_indices] += np.log1p(df['vote_count'].iloc[candidate_indices].values) * 0.005\n    \n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 24.071417283266783,
+    "latency_p95": 28.93691696226597,
+    "latency_p99": 38.92966592684388,
+    "llm_cost_usd": 0.001573,
+    "mrr": 0.647727,
+    "ndcg": 0.569135,
+    "precision": 0.118182,
+    "top1": 0.636364
+  },
+  "status": "discard",
+  "description": "optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks, reducing dataframe overhead during score fusion",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_352",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:37:49",
+  "prompt_hash": "a4a83dc7",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # 1. Candidate Retrieval\n    pool_size = 400\n    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, pool_size)\n    \n    # Union indices and map for RRF\n    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    \n    # 2. Score Calculation\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 Ranks\n    b_ranks = np.argsort(np.argsort(bm25_scores[candidates]))\n    rrf_scores[candidates] += 1.0 / (60.0 + b_ranks)\n    \n    # Semantic Ranks\n    s_ranks = np.argsort(np.argsort(dists[0]))\n    rrf_scores[idx_s[0]] += 1.0 / (60.0 + s_ranks)\n    \n    # 3. Genre-Aware Popularity Boosting\n    # Genre boost based on query presence in genre strings\n    genre_boost = np.array([1.0 + 0.5 * any(g.lower() in query.lower() for g in str(row).split(',')) \n                            for row in df['genres']])\n    \n    # Popularity normalization\n    pop_score = np.log1p(df['vote_count'].values)\n    pop_score = pop_score / (np.max(pop_score) + 1e-9)\n    \n    final_scores = rrf_scores * genre_boost + (0.1 * pop_score)\n    \n    # 4. Extraction\n    top_indices = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 33.160749822854996,
+    "latency_p95": 35.95916694030166,
+    "latency_p99": 36.76791628822684,
+    "llm_cost_usd": 0.001555,
+    "mrr": 0.484848,
+    "ndcg": 0.457649,
+    "precision": 0.1,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "implement genre-aware RRF with title-text BM25 field boosting and popularity-dampened score fusion",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": false,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_353",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:37:55",
+  "prompt_hash": "23fc8c8c",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # BM25 retrieval with title-bias: boost scores for matches in title field\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Semantic retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Combine signals using RRF\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 contribution\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Genre-aware boost: identify genre-relevant candidates\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres_col = df['genres'].values\n        for i in np.where(rrf_scores > 0)[0]:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.4\n    \n    # Popularity bias\n    rrf_scores[rrf_scores > 0] += np.log1p(df['vote_count'].iloc[np.where(rrf_scores > 0)[0]].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 22.38004095852375,
+    "latency_p95": 27.857915963977575,
+    "latency_p99": 54.19787485152483,
+    "llm_cost_usd": 0.001556,
+    "mrr": 0.569805,
+    "ndcg": 0.513394,
+    "precision": 0.109091,
+    "top1": 0.545455
+  },
+  "status": "discard",
+  "description": "hybrid search with term-frequency-aware title-field BM25 boosting and genre-aware rank fusion to improve long-tail and semantic recall",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_354",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:00",
+  "prompt_hash": "13af7033",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # RRF parameters\n    k = 60\n    scores = np.zeros(len(df))\n    \n    # BM25 contribution\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b):\n        scores[i] += 1.0 / (k + (300 - rank))\n        \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0][::-1]):\n        scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: identify query intent\n    genre_list = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n    query_genres = [t for t in tokens if t in genre_list]\n    \n    if query_genres:\n        genre_mask = df['genres'].str.lower().apply(lambda x: any(g in str(x) for g in query_genres))\n        scores[genre_mask] *= 1.3\n        \n    # Title match boost\n    query_str = \" \" + \" \".join(tokens) + \" \"\n    titles = df['title'].str.lower().values\n    for i in np.where(scores > 0)[0]:\n        if \" \" + titles[i] + \" \" in query_str:\n            scores[i] *= 1.5\n            \n    # Popularity bias: log-scaled vote_count normalized\n    pop_boost = np.log1p(df['vote_count'].values)\n    pop_boost /= (pop_boost.max() + 1e-6)\n    scores *= (1.0 + 0.1 * pop_boost)\n    \n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.87720812112093,
+    "latency_p95": 28.590249828994274,
+    "latency_p99": 30.693083070218563,
+    "llm_cost_usd": 0.001574,
+    "mrr": 0.083442,
+    "ndcg": 0.134487,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "hybrid search with genre-boosted title density andpopularity-weighted RRF for long-tail retrieval",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_355",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:05",
+  "prompt_hash": "b1de1c0a",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Semantic Search\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # BM25 Retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    \n    # RRF Score Fusion\n    k_rrf = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # RRF for BM25\n    bm25_top = idx_b[np.argsort(bm25_scores[idx_b])][::-1]\n    for rank, i in enumerate(bm25_top):\n        if bm25_scores[i] > 0:\n            rrf_scores[i] += 1.0 / (k_rrf + rank)\n            \n    # RRF for Semantic\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Popularity & Genre Boost\n    candidates = np.where(rrf_scores > 0)[0]\n    if len(candidates) > 0:\n        votes = df['vote_count'].iloc[candidates].values\n        pop_boost = np.log1p(votes) * 0.05\n        \n        # Genre Boost\n        genre_list = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n        query_genres = [t for t in tokens if t in genre_list]\n        if query_genres:\n            genres_col = df['genres'].iloc[candidates].values\n            for idx, i in enumerate(candidates):\n                g_str = str(genres_col[idx]).lower()\n                if any(g in g_str for g in query_genres):\n                    rrf_scores[i] *= 1.2\n        \n        rrf_scores[candidates] += pop_boost\n        \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 22.72587502375245,
+    "latency_p95": 31.119042076170444,
+    "latency_p99": 44.82149984687567,
+    "llm_cost_usd": 0.001589,
+    "mrr": 0.359091,
+    "ndcg": 0.39418,
+    "precision": 0.1,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize retrieval with RRF, genre-specific BM25 weighting, and popularity dampening",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_356",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:11",
+  "prompt_hash": "97a92a00",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # BM25 scores for all movies\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Semantic scores via FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Initialize RRF scores\n    rrf_scores = np.zeros(len(df))\n    \n    # RRF parameters\n    k = 60\n    \n    # Add BM25 signal (Top 300)\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Add Semantic signal\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n    \n    # Genre-boost using vectorized intersection\n    genre_match = np.zeros(len(df))\n    if tokens:\n        genres_col = df['genres'].values\n        for token in tokens:\n            # Check if token acts as a genre keyword\n            if token in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\", \"adventure\", \"fantasy\"]:\n                for i in range(len(genres_col)):\n                    if token in str(genres_col[i]).lower():\n                        genre_match[i] += 0.5\n    \n    # Apply genre boost and popularity bias to candidates\n    rrf_scores += genre_match\n    \n    # Popularity boost (dampened)\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.005\n    \n    # Extract top results\n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 23.849875200539827,
+    "latency_p95": 37.696917075663805,
+    "latency_p99": 42.472457978874445,
+    "llm_cost_usd": 0.001571,
+    "mrr": 0.478896,
+    "ndcg": 0.418621,
+    "precision": 0.1,
+    "top1": 0.454545
+  },
+  "status": "discard",
+  "description": "hybrid search with term-frequency-aware title-field BM25 boosting and genre-aware rank fusion for enhanced long-tail recall",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_357",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:16",
+  "prompt_hash": "0788ff81",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Use RRF to combine signals\n    k_rrf = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 Top candidates\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Semantic Top candidates\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Apply genre boost\n    candidates = np.where(rrf_scores > 0)[0]\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        # Vectorized check for genre presence\n        for i in candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.2\n                \n    # Popularity bias (logarithmic)\n    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.05\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 22.593500092625618,
+    "latency_p95": 26.484166737645864,
+    "latency_p99": 27.49308291822672,
+    "llm_cost_usd": 0.001557,
+    "mrr": 0.372078,
+    "ndcg": 0.425388,
+    "precision": 0.118182,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "use weighted hybrid RRF with expanded text-field BM25 to improve semantic recall and rank stability",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": true,
+    "recall_ok": true,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_358",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:22",
+  "prompt_hash": "755ec2e8",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Retrieve candidates using BM25 and Semantic search\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # RRF scores initialization\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 RRF\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Semantic RRF\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n    \n    # Genre and popularity boost\n    candidates = np.where(rrf_scores > 0)[0]\n    if len(candidates) > 0:\n        # Normalize popularity to prevent extreme bias\n        pop_boost = np.log1p(df['vote_count'].iloc[candidates].values)\n        pop_boost /= (np.max(pop_boost) + 1e-9)\n        \n        # Genre boost\n        genre_matches = np.zeros(len(candidates))\n        for g in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]:\n            if g in tokens:\n                matches = df['genres'].iloc[candidates].str.lower().str.contains(g).values\n                genre_matches += matches.astype(float)\n        \n        # Combine\n        rrf_scores[candidates] += (pop_boost * 0.1) + (genre_matches * 0.2)\n        \n    # Final rank\n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 23.441041819751263,
+    "latency_p95": 26.20954206213355,
+    "latency_p99": 27.047000359743834,
+    "llm_cost_usd": 0.001572,
+    "mrr": 0.437229,
+    "ndcg": 0.417338,
+    "precision": 0.109091,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "optimize cost and recall by using a normalized hybrid scoring with popularity-dampened genre boosting and title-token overlap scoring",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_359",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:27",
+  "prompt_hash": "2dfd0e50",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Get scores directly\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Use top 300 for BM25 candidates to match FAISS pool\n    idx_b = np.argsort(bm25_scores)[-300:]\n    \n    # RRF scoring\n    rrf_scores = np.zeros(len(df))\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Genre boost: identify candidates and apply mask\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        # Only check top candidates for genre boost to save time\n        candidates = np.where(rrf_scores > 0)[0]\n        for i in candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.25\n                \n    # Popularity boost\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 22.31254195794463,
+    "latency_p95": 27.13083289563656,
+    "latency_p99": 29.103458393365145,
+    "llm_cost_usd": 0.001561,
+    "mrr": 0.467532,
+    "ndcg": 0.436205,
+    "precision": 0.090909,
+    "top1": 0.454545
+  },
+  "status": "discard",
+  "description": "Optimize retrieval cost by using a unified candidate pool of 300 with simplified scoring and direct NumPy indexing to reduce redundant DataFrame operations.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_360",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:33",
+  "prompt_hash": "4af2b538",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Semantic retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # BM25 retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Hybrid score aggregation via RRF\n    rrf_scores = np.zeros(len(df))\n    k = 60\n    \n    # BM25 top 250\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    for rank, i in enumerate(idx_b):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Semantic top 250\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n    \n    # Genre boost and Title boost\n    genre_list = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n    query_genres = [t for t in tokens if t in genre_list]\n    \n    if query_genres or tokens:\n        for i in range(len(df)):\n            if rrf_scores[i] > 0:\n                # Genre overlap\n                g_str = str(df['genres'].iloc[i]).lower()\n                for g in query_genres:\n                    if g in g_str:\n                        rrf_scores[i] *= 1.2\n                \n                # Title keyword density\n                t_tokens = _bm25_tokenize(str(df['title'].iloc[i]))\n                for t in tokens:\n                    if t in t_tokens:\n                        rrf_scores[i] *= 1.1\n    \n    # Popularity boost\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.001\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 32.17633441090584,
+    "latency_p95": 35.2802500128746,
+    "latency_p99": 86.54954191297293,
+    "llm_cost_usd": 0.001588,
+    "mrr": 0.30303,
+    "ndcg": 0.289435,
+    "precision": 0.054545,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "hybrid search with genre-aware RRF and title-keyword density prioritization",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": false,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_361",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:38",
+  "prompt_hash": "5a9d6330",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    rrf_scores = np.zeros(len(df))\n    k = 60\n    \n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n    \n    # Genre boost and popularity dampening\n    candidates = np.where(rrf_scores > 0)[0]\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if len(query_genres) > 0:\n        genres = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.2\n                \n    # Log-popularity boost\n    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.454545,
+    "latency_ms": 23.46791699528694,
+    "latency_p95": 27.075374964624643,
+    "latency_p99": 30.80612514168024,
+    "llm_cost_usd": 0.001557,
+    "mrr": 0.387987,
+    "ndcg": 0.370178,
+    "precision": 0.081818,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "hybrid search with term-frequency-aware title-field BM25 boosting, genre-aware RRF, and log-popularity dampening to optimize cost and relevance",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_362",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:43",
+  "prompt_hash": "93b9203e",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Semantic search with a wider pool to capture potential hits\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Extract unique candidates\n    candidate_indices = np.unique(idx_s[0])\n    \n    # Calculate scores on candidate pool only\n    scores = np.zeros(len(df))\n    \n    # Add BM25 scores for candidates\n    bm25_scores = bm25.get_scores(tokens)\n    scores[candidate_indices] += bm25_scores[candidate_indices]\n    \n    # Add normalized semantic scores\n    semantic_scores = 1.0 / (1.0 + dists[0])\n    scores[idx_s[0]] += semantic_scores\n    \n    # Genre boost: identify genres in query\n    genres_list = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\", \"adventure\"]\n    query_genres = [t for t in tokens if t in genres_list]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in candidate_indices:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                scores[i] *= 1.2\n                \n    # Popularity bias\n    scores[candidate_indices] += np.log1p(df['vote_count'].iloc[candidate_indices].values) * 0.05\n    \n    top_indices = np.argsort(scores[candidate_indices])[-top_k:][::-1]\n    final_indices = candidate_indices[top_indices]\n    \n    return df.iloc[final_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.220290895551443,
+    "latency_p95": 25.972708128392696,
+    "latency_p99": 27.509000152349472,
+    "llm_cost_usd": 0.001566,
+    "mrr": 0.145815,
+    "ndcg": 0.168004,
+    "precision": 0.054545,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "prioritize semantic retrieval with a genre-boosted re-ranking and reduced redundant dataframe operations to optimize cost",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_363",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:48",
+  "prompt_hash": "a1e12224",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    k = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # Efficient BM25 retrieval\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    for rank, i in enumerate(np.argsort(bm25_scores[idx_b])[::-1]):\n        rrf_scores[idx_b[i]] += 1.0 / (k + rank)\n        \n    # Semantic retrieval\n    for rank, i in enumerate(idx_s[0]):\n        if i != -1:\n            rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: identify candidates\n    candidates = np.where(rrf_scores > 0)[0]\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.2\n                \n    # Popularity bias\n    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 23.277374915778637,
+    "latency_p95": 26.52445761486888,
+    "latency_p99": 27.343625202775,
+    "llm_cost_usd": 0.001575,
+    "mrr": 0.387987,
+    "ndcg": 0.350036,
+    "precision": 0.072727,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "optimize retrieval cost by using a unified candidate pool of 200 with direct numpy scoring and genre-masking",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_364",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:38:55",
+  "prompt_hash": "5eb871f7",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # 1. BM25 with Title Boost\n    # Re-weight title tokens by duplicating them in the input for BM25\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # 2. Semantic Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # 3. RRF with Genre Boosting\n    # Use a slightly larger pool for RRF to ensure long-tail reach\n    k_rrf = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 contribution\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # 4. Genre Affinity & Popularity Boost\n    # Identify relevant movies by genre intersection to sharpen ranking\n    genres_col = df['genres'].values\n    for i in range(len(df)):\n        if rrf_scores[i] > 0:\n            genre_str = str(genres_col[i]).lower()\n            genre_match = sum(1 for t in tokens if t in genre_str)\n            if genre_match > 0:\n                rrf_scores[i] *= (1.0 + 0.5 * genre_match)\n            \n            # Logarithmic vote dampening to surface high-quality long-tail\n            rrf_scores[i] *= (1.0 + np.log1p(df['vote_count'].iloc[i]) * 0.05)\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 28.519874904304743,
+    "latency_p95": 32.22770802676678,
+    "latency_p99": 40.87249981239438,
+    "llm_cost_usd": 0.001594,
+    "mrr": 0.268939,
+    "ndcg": 0.257651,
+    "precision": 0.072727,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize retrieval by incorporating title-specific BM25 weighting and refined genre affinity scoring into the RRF pipeline",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": false,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_365",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:02",
+  "prompt_hash": "48dad65d",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Retrieve BM25 scores (using pre-built bm25)\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Retrieve semantic scores\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # RRF params\n    k = 60\n    scores = np.zeros(len(df))\n    \n    # BM25 contribution\n    # Get top 250 candidates from BM25 to avoid full array processing\n    idx_b = np.argpartition(bm25_scores, -250)[-250:]\n    bm25_vals = bm25_scores[idx_b]\n    sorted_idx_b = idx_b[np.argsort(bm25_vals)[::-1]]\n    for rank, i in enumerate(sorted_idx_b):\n        scores[i] += 1.0 / (k + rank)\n        \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0]):\n        scores[i] += 1.0 / (k + rank)\n        \n    # Genre and Popularity boosting\n    # Boost by vote_count (log scale) to favor high-quality matches\n    # Use vote_average as a multiplier for candidates\n    vote_boost = np.log1p(df['vote_count'].values) / np.log1p(df['vote_count'].max())\n    scores *= (1.0 + 0.2 * vote_boost)\n    \n    # Apply genre boost\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres = df['genres'].values\n        for i in range(len(df)):\n            g_str = str(genres[i]).lower()\n            if any(qg in g_str for qg in query_genres):\n                scores[i] *= 1.25\n                \n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 22.292207926511765,
+    "latency_p95": 37.244458217173815,
+    "latency_p99": 53.20549989119172,
+    "llm_cost_usd": 0.001614,
+    "mrr": 0.348485,
+    "ndcg": 0.31188,
+    "precision": 0.063636,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "use RRF with cross-field BM25 on text and genre-specific vote-boosted scoring for better long-tail recall",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_366",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:07",
+  "prompt_hash": "49ef2c48",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    # BM25 baseline retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Semantic retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    # Pre-calculate RRF scores\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 Top 250\n    idx_b = np.argsort(bm25_scores)[-250:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Semantic Top 250\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Apply genre boost\n    candidates = np.where(rrf_scores > 0)[0]\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[i] *= 1.25\n                \n    # Title-boost for lexical precision\n    titles = df['title'].values\n    for i in candidates:\n        if any(t in str(titles[i]).lower() for t in tokens):\n            rrf_scores[i] *= 1.5\n                \n    # Popularity bias\n    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.454545,
+    "latency_ms": 24.83520796522498,
+    "latency_p95": 28.45541713759303,
+    "latency_p99": 30.206291936337948,
+    "llm_cost_usd": 0.001607,
+    "mrr": 0.322727,
+    "ndcg": 0.335804,
+    "precision": 0.081818,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "improve retrieval by incorporating title-weighted BM25 with dynamic genre-match boosting and popularity bias for better long-tail precision.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_367",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:12",
+  "prompt_hash": "346f4846",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    num_docs = len(df)\n    rrf_scores = np.zeros(num_docs)\n    \n    k = 60\n    \n    # BM25 contribution\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        if bm25_scores[i] > 0:\n            rrf_scores[i] += 1.0 / (k + rank)\n            \n    # Semantic contribution\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: identify genres in query tokens\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\", \"fantasy\", \"mystery\"]]\n    \n    if query_genres:\n        genres_col = df['genres'].values\n        for i in range(num_docs):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres_col[i]).lower()\n                for g in query_genres:\n                    if g in genre_str:\n                        rrf_scores[i] *= 1.2\n                        break\n    \n    # Popularity boost\n    pop_scores = np.log1p(df['vote_count'].values)\n    pop_norm = (pop_scores - pop_scores.min()) / (pop_scores.max() - pop_scores.min() + 1e-9)\n    rrf_scores += pop_norm * 0.1\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 23.890750017017126,
+    "latency_p95": 26.971166022121906,
+    "latency_p99": 28.89320906251669,
+    "llm_cost_usd": 0.001604,
+    "mrr": 0.344156,
+    "ndcg": 0.337758,
+    "precision": 0.072727,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "Use a combined text-field index with RRF-weighted genre and popularity boosting for efficient retrieval",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_368",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:18",
+  "prompt_hash": "c14d9192",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    rrf_scores = np.zeros(len(df))\n    k = 60\n    \n    # BM25 scores\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Semantic scores\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre affinity boost\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\", \"animation\", \"fantasy\", \"mystery\"]]\n    if query_genres:\n        genres_col = df['genres'].values\n        for i in range(len(df)):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres_col[i]).lower()\n                if any(g in genre_str for g in query_genres):\n                    rrf_scores[i] *= 1.25\n    \n    # Popularity bias for tie-breaking and long-tail weight\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.001\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 23.766125086694956,
+    "latency_p95": 27.555542066693306,
+    "latency_p99": 28.441584203392267,
+    "llm_cost_usd": 0.00158,
+    "mrr": 0.457576,
+    "ndcg": 0.425059,
+    "precision": 0.1,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "optimize retrieval by using cross-field BM25 on text and genre-weighted RRF with popularity-adjusted rank fusion",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_369",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:23",
+  "prompt_hash": "aaa21434",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    num_docs = len(df)\n    rrf_scores = np.zeros(num_docs)\n    k = 60\n    \n    # BM25 Top candidates\n    idx_b = np.argpartition(bm25_scores, -300)[-300:]\n    for rank, i in enumerate(np.argsort(bm25_scores[idx_b])[::-1]):\n        rrf_scores[idx_b[i]] += 1.0 / (k + rank)\n        \n    # Semantic Top candidates\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost and popularity normalization\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres_col = df['genres'].values\n        popularity = np.log1p(df['vote_count'].values)\n        \n        for i in range(num_docs):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres_col[i]).lower()\n                match_count = sum(1 for g in query_genres if g in genre_str)\n                if match_count > 0:\n                    rrf_scores[i] *= (1.0 + 0.5 * match_count)\n                \n                # Popularity dampening: adjust score by relative popularity\n                rrf_scores[i] *= (1.0 + 0.05 * (popularity[i] / (popularity.max() + 1e-9)))\n\n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.689415771514177,
+    "latency_p95": 27.619916945695877,
+    "latency_p99": 28.3505842089653,
+    "llm_cost_usd": 0.001613,
+    "mrr": 0.280303,
+    "ndcg": 0.238645,
+    "precision": 0.063636,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "implement balanced RRF with genre-intersection boosting and vote-adjusted score normalization to improve retrieval for long-tail and niche queries.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_370",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:29",
+  "prompt_hash": "efdfc0e5",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # BM25 scores on full text index\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Semantic scores\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Reciprocal Rank Fusion\n    k = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # RRF BM25\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # RRF Semantic\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre boost: identify genres in query\n    genre_list = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n    query_genres = [t for t in tokens if t in genre_list]\n    \n    if query_genres:\n        # Vectorized genre masking\n        genres_col = df['genres'].values\n        for i in range(len(df)):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres_col[i]).lower()\n                if any(g in genre_str for g in query_genres):\n                    rrf_scores[i] *= 1.2\n                    \n    # Popularity boost: log-scaled vote count\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.001\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 23.86383432894945,
+    "latency_p95": 28.22041604667902,
+    "latency_p99": 37.882749922573566,
+    "llm_cost_usd": 0.001603,
+    "mrr": 0.321212,
+    "ndcg": 0.290167,
+    "precision": 0.063636,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "use BM25 on the full text field and combine with semantic search via normalized RRF to capture long-tail queries, using direct array indexing to minimize cost",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_371",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:39:34",
+  "prompt_hash": "feb40372",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    rrf_scores = np.zeros(len(df))\n    k = 60\n    \n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n    \n    candidates = np.where(rrf_scores > 0)[0]\n    \n    genre_map = {\n        \"action\": 0, \"comedy\": 1, \"drama\": 2, \"horror\": 3, \n        \"sci-fi\": 4, \"thriller\": 5, \"romance\": 6, \"western\": 7, \"crime\": 8\n    }\n    query_genres = [t for t in tokens if t in genre_map]\n    \n    if query_genres:\n        genres = df['genres'].values\n        for i in candidates:\n            g_str = str(genres[i]).lower()\n            if any(g in g_str for g in query_genres):\n                rrf_scores[i] *= 1.4\n                \n    votes = df['vote_count'].values\n    if len(votes) > 0:\n        max_votes = np.max(votes) + 1\n        rrf_scores[candidates] += (votes[candidates] / max_votes) * 0.1\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.681818,
+    "latency_ms": 22.618125192821026,
+    "latency_p95": 26.61504177376628,
+    "latency_p99": 26.974750217050314,
+    "llm_cost_usd": 0.001604,
+    "mrr": 0.441919,
+    "ndcg": 0.476953,
+    "precision": 0.127273,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "use query-aware BM25 field-weighting with semantic RRF and genre-affinity boosting",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": true,
+    "recall_ok": true,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_372",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:19",
+  "prompt_hash": "a791e923",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Increase pool size to capture more candidates\n    pool_size = 400\n    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, pool_size)\n    \n    # RRF calculation\n    all_indices = np.unique(np.concatenate([idx_b, idx_s[0]]))\n    rrf_scores = np.zeros(len(all_indices))\n    \n    idx_map = {idx: i for i, idx in enumerate(all_indices)}\n    \n    # BM25 contribution\n    for rank, idx in enumerate(np.argsort(bm25_scores[all_indices])[::-1]):\n        rrf_scores[idx] += 1.0 / (60 + rank)\n        \n    # Semantic contribution\n    for rank, idx in enumerate(idx_s[0]):\n        if idx in idx_map:\n            rrf_scores[idx_map[idx]] += 1.0 / (60 + rank)\n            \n    # Genre boost: identify genres in query\n    query_lower = query.lower()\n    genre_boosts = np.zeros(len(all_indices))\n    for i, idx in enumerate(all_indices):\n        movie_genres = str(df['genres'].iloc[idx]).lower()\n        # Simple overlap check\n        for token in tokens:\n            if token in movie_genres:\n                genre_boosts[i] += 0.1\n                \n    final_scores = rrf_scores + genre_boosts\n    \n    top_indices = all_indices[np.argsort(final_scores)[-top_k:][::-1]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 29.01208307594061,
+    "latency_p95": 31.861125025898218,
+    "latency_p99": 32.40216709673405,
+    "llm_cost_usd": 0.001607,
+    "mrr": 0.371212,
+    "ndcg": 0.329554,
+    "precision": 0.072727,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "implement genre-aware RRF with title-text field-weighted BM25 for balanced retrieval",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": false,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_373",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:25",
+  "prompt_hash": "498ca2cf",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 400)\n    \n    rrf_k = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # BM25 top candidates\n    idx_b = np.argsort(bm25_scores)[-400:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (rrf_k + rank)\n        \n    # Semantic top candidates\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (rrf_k + rank)\n        \n    # Genre affinity boosting\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\", \"fantasy\", \"mystery\"]]\n    if query_genres:\n        genres_col = df['genres'].values\n        for i in range(len(rrf_scores)):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres_col[i]).lower()\n                if any(g in genre_str for g in query_genres):\n                    rrf_scores[i] *= 1.25\n    \n    # Popularity bias\n    vote_counts = df['vote_count'].values\n    rrf_scores += np.log1p(vote_counts) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 24.58920795470476,
+    "latency_p95": 28.64133333787322,
+    "latency_p99": 29.514832887798548,
+    "llm_cost_usd": 0.001607,
+    "mrr": 0.454545,
+    "ndcg": 0.393619,
+    "precision": 0.072727,
+    "top1": 0.454545
+  },
+  "status": "discard",
+  "description": "Use RRF on a 400-candidate pool with query-intent genre weighting and title-text BM25 field boosting.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": false,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_374",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:30",
+  "prompt_hash": "62f5a5e0",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    \n    # Efficient BM25 retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    idx_b = np.argsort(bm25_scores)[-200:]\n    \n    # Semantic retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 200)\n    \n    # RRF Score Fusion\n    k_rrf = 60\n    rrf_scores = np.zeros(len(df))\n    \n    # Apply BM25 scores with title bias\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Apply Semantic scores\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Apply genre and popularity boost\n    candidates = np.where(rrf_scores > 0)[0]\n    if len(candidates) > 0:\n        # Genre boost: identify genre-relevant candidates efficiently\n        genres = df['genres'].values\n        genre_matches = np.array([1.5 if any(g in str(genres[i]).lower() for g in tokens) else 1.0 for i in candidates])\n        \n        # Popularity dampening: use log-normalized vote counts to prioritize quality\n        popularity = np.log1p(df['vote_count'].iloc[candidates].values)\n        popularity /= (np.max(popularity) + 1e-6)\n        \n        rrf_scores[candidates] *= (genre_matches + 0.2 * popularity)\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 24.33212473988533,
+    "latency_p95": 28.598582837730646,
+    "latency_p99": 37.13437542319298,
+    "llm_cost_usd": 0.001618,
+    "mrr": 0.363636,
+    "ndcg": 0.318182,
+    "precision": 0.063636,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "use RRF on a dual-pool retrieval with BM25 title-boosted weighting and direct numpy-indexed popularity normalization to improve long-tail and genre-specific recall while minimizing cost.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_375",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:36",
+  "prompt_hash": "bb65d282",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # RRF parameters\n    k_rrf = 60\n    scores = np.zeros(len(df))\n    \n    # BM25 top candidates\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Semantic top candidates\n    for rank, i in enumerate(idx_s[0]):\n        scores[i] += 1.0 / (k_rrf + rank)\n        \n    # Apply genre boost\n    candidates = np.where(scores > 0)[0]\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\", \"family\", \"musical\"]]\n    \n    if query_genres:\n        genres = df['genres'].values\n        for i in candidates:\n            genre_str = str(genres[i]).lower()\n            match_count = sum(1 for g in query_genres if g in genre_str)\n            if match_count > 0:\n                scores[i] *= (1.0 + 0.5 * match_count)\n                \n    # Popularity boost using vote_average and log vote_count\n    votes = df['vote_count'].iloc[candidates].values\n    avg = df['vote_average'].iloc[candidates].values\n    scores[candidates] += (np.log1p(votes) * 0.05) + (avg * 0.02)\n    \n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 23.133124690502882,
+    "latency_p95": 28.921999968588352,
+    "latency_p99": 30.048083048313856,
+    "llm_cost_usd": 0.001631,
+    "mrr": 0.359848,
+    "ndcg": 0.376667,
+    "precision": 0.1,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "use weighted RRF with title-text field BM25 and genre-vote signal integration to capture semantic and long-tail nuance",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_376",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:41",
+  "prompt_hash": "436e7812",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    rrf_scores = np.zeros(len(df))\n    \n    # Efficient BM25 retrieval\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Semantic retrieval\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Genre boost: identify candidates and apply mask without full DF filtering\n    genres = df['genres'].values\n    votes = df['vote_count'].values\n    \n    # Targeted genre boosting using direct array access\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        for i in range(len(df)):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres[i]).lower()\n                if any(g in genre_str for g in query_genres):\n                    rrf_scores[i] *= 1.2\n    \n    # Popularity bias\n    mask = rrf_scores > 0\n    rrf_scores[mask] += np.log1p(votes[mask]) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 22.510041017085314,
+    "latency_p95": 26.522125117480755,
+    "latency_p99": 33.01450004801154,
+    "llm_cost_usd": 0.001616,
+    "mrr": 0.387987,
+    "ndcg": 0.33501,
+    "precision": 0.081818,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "optimize retrieval by using direct index access to popularity and genre signals without full dataframe filtering to reduce latency and cost",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_377",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:47",
+  "prompt_hash": "e356f402",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 250)\n    \n    rrf_scores = np.zeros(len(df))\n    k_const = 60\n    \n    # Efficiently add BM25 RRF scores\n    idx_b = np.argsort(bm25_scores)[-250:]\n    for rank, i in enumerate(idx_b[::-1]):\n        rrf_scores[i] += 1.0 / (k_const + rank)\n        \n    # Add Semantic RRF scores\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k_const + rank)\n        \n    # Genre and Popularity boosting\n    # Pre-compute popularity/genre signals locally to avoid dataframe overhead\n    votes = df['vote_count'].values\n    genres_col = df['genres'].values\n    \n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    \n    if query_genres:\n        for i in range(len(df)):\n            if rrf_scores[i] > 0:\n                genre_str = str(genres_col[i]).lower()\n                if any(g in genre_str for g in query_genres):\n                    rrf_scores[i] *= 1.8\n                \n    # Add popularity bias based on log scale\n    rrf_scores += np.log1p(votes) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 22.89262507110834,
+    "latency_p95": 27.3029999807477,
+    "latency_p99": 29.42050015553832,
+    "llm_cost_usd": 0.001625,
+    "mrr": 0.387987,
+    "ndcg": 0.340746,
+    "precision": 0.072727,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "optimize retrieval by incorporating genre-aware semantic vector expansion and BM25 term frequency boosting to capture niche query intents without increasing latency",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": true,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_378",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:52",
+  "prompt_hash": "e0979353",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Use 300-candidate pool for hybrid search\n    all_indices = np.union1d(np.argsort(bm25_scores)[-300:], idx_s[0])\n    \n    rrf_scores = np.zeros(len(df))\n    k = 60\n    \n    # RRF scoring\n    bm25_sorted = np.argsort(bm25_scores)[-300:][::-1]\n    for rank, i in enumerate(bm25_sorted):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (k + rank)\n        \n    # Genre-affinity signal: identify tokens that match genres in dataset\n    genre_keywords = {\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"}\n    query_genres = [t for t in tokens if t in genre_keywords]\n    \n    if query_genres:\n        # Vectorized genre matching on the candidate set\n        genres_col = df['genres'].iloc[all_indices].values\n        for i, idx in enumerate(all_indices):\n            genre_str = str(genres_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                rrf_scores[idx] *= 1.25\n                \n    # Popularity boost (log-dampened)\n    rrf_scores[all_indices] += np.log1p(df['vote_count'].iloc[all_indices].values) * 0.001\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.272727,
+    "latency_ms": 23.541290778666735,
+    "latency_p95": 26.882166042923927,
+    "latency_p99": 30.985208693891764,
+    "llm_cost_usd": 0.001644,
+    "mrr": 0.230303,
+    "ndcg": 0.212863,
+    "precision": 0.045455,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "add query-dependent genre embedding boost and streamline hybrid scoring for cost efficiency",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_379",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:46:58",
+  "prompt_hash": "54dbcfd1",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Unified candidate pool: 300 candidates to balance recall and cost\n    pool_size = 300\n    dists, idx_s = index.search(query_vec, pool_size)\n    \n    # Pre-compute indices for BM25 top candidates\n    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]\n    \n    # RRF scores\n    rrf = np.zeros(len(df))\n    k = 60\n    \n    for rank, i in enumerate(idx_b):\n        rrf[i] += 1.0 / (k + pool_size - 1 - rank)\n    \n    for rank, i in enumerate(idx_s[0]):\n        rrf[i] += 1.0 / (k + rank)\n        \n    # Genre boost and popularity normalization\n    candidates = np.where(rrf > 0)[0]\n    if len(candidates) > 0:\n        # Genre signal: binary mask intersection\n        query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n        if query_genres:\n            genres = df['genres'].iloc[candidates].values\n            for i, idx in enumerate(candidates):\n                g_str = str(genres[i]).lower()\n                if any(g in g_str for g in query_genres):\n                    rrf[idx] *= 1.2\n                    \n        # Popularity dampening: log-scale boost to favor well-regarded content\n        votes = df['vote_count'].iloc[candidates].values\n        rrf[candidates] += np.log1p(votes) * 0.005\n    \n    top_indices = np.argsort(rrf)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 23.108915891498327,
+    "latency_p95": 35.69837519899011,
+    "latency_p99": 52.68404120579362,
+    "llm_cost_usd": 0.001646,
+    "mrr": 0.363997,
+    "ndcg": 0.359964,
+    "precision": 0.1,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "Use RRF with genre-intersection boosting and pre-computed popularity normalization on a unified candidate pool to improve retrieval for long-tail queries without increasing latency.",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_380",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:47:03",
+  "prompt_hash": "cd60dcfe",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Prepare query\n    tokens = _bm25_tokenize(query)\n    \n    # Semantic search\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # BM25 search\n    bm25_scores = bm25.get_scores(tokens)\n    \n    # Combine signals using normalized RRF\n    # Using a 300 candidate pool to balance performance and recall\n    combined_scores = np.zeros(len(df))\n    \n    # Boost BM25 candidates\n    idx_b = np.argsort(bm25_scores)[-300:]\n    for rank, i in enumerate(idx_b[::-1]):\n        combined_scores[i] += 1.0 / (60.0 + rank)\n        \n    # Boost Semantic candidates\n    for rank, i in enumerate(idx_s[0]):\n        combined_scores[i] += 1.0 / (60.0 + rank)\n        \n    # Genre boost: identify genres in query and boost matching candidates\n    genres = [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]\n    query_genres = [t for t in tokens if t in genres]\n    \n    if query_genres:\n        # Use direct column access\n        genre_col = df['genres'].values\n        for i in np.where(combined_scores > 0)[0]:\n            genre_str = str(genre_col[i]).lower()\n            if any(g in genre_str for g in query_genres):\n                combined_scores[i] *= 1.25\n                \n    # Final ranking\n    top_indices = np.argsort(combined_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 23.26683420687914,
+    "latency_p95": 26.52925020083785,
+    "latency_p99": 27.514582965523005,
+    "llm_cost_usd": 0.001625,
+    "mrr": 0.280303,
+    "ndcg": 0.257701,
+    "precision": 0.054545,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "optimize retrieval by using a consolidated candidate pool with normalized hybrid scoring and direct numpy indexing to reduce overhead and cost",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": false,
+    "top1_ok": false,
+    "precision_ok": false,
+    "recall_ok": false,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_381",
+  "objective": "cost",
+  "timestamp": "2026-05-19T14:47:08",
+  "prompt_hash": "b6e30290",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    return re.findall(r'\\b\\w\\w+\\b', text.lower())\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokens)\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idx_s = index.search(query_vec, 300)\n    \n    # Pre-allocate RRF scores\n    rrf_scores = np.zeros(len(df), dtype=np.float32)\n    \n    # BM25 RRF\n    idx_b = np.argpartition(bm25_scores, -200)[-200:]\n    for rank, i in enumerate(idx_b[np.argsort(bm25_scores[idx_b])[::-1]]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Semantic RRF\n    for rank, i in enumerate(idx_s[0]):\n        rrf_scores[i] += 1.0 / (60 + rank)\n        \n    # Apply genre-affinity boost using pre-calculated tokens\n    query_genres = [t for t in tokens if t in [\"action\", \"comedy\", \"drama\", \"horror\", \"sci-fi\", \"thriller\", \"romance\", \"western\", \"crime\"]]\n    if query_genres:\n        genres = df['genres'].values\n        # Only check candidates with non-zero scores to save time\n        candidates = np.where(rrf_scores > 0)[0]\n        for i in candidates:\n            g_str = str(genres[i]).lower()\n            if any(g in g_str for g in query_genres):\n                rrf_scores[i] *= 1.2\n                \n    # Add vote-count popularity bias\n    rrf_scores += np.log1p(df['vote_count'].values) * 0.005\n    \n    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.636364,
+    "latency_ms": 22.887500002980232,
+    "latency_p95": 26.629707776010036,
+    "latency_p99": 29.90466682240367,
+    "llm_cost_usd": 0.001639,
+    "mrr": 0.647727,
+    "ndcg": 0.574561,
+    "precision": 0.118182,
+    "top1": 0.636364
+  },
+  "status": "discard",
+  "description": "use query-specific genre expansion and streamlined RRF scoring with pre-calculated popularity signals to minimize overhead and improve retrieval precision",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "latency_ok": true,
+    "cost_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+

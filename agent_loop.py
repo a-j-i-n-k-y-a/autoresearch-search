@@ -566,8 +566,8 @@ def regenerate_registry(updated_objective, updated_profile, updated_metrics, upd
         },
         "low_cost": {
             "objective":    "cost",
-            "description":  "minimize LLM cost — simplest implementation",
-            "use_when":     "high volume, cost-sensitive workloads",
+            "description":  "Minimize cost of single experiment in a particular profile run",
+            "use_when":     "Use to compare the generation cost of the code(single experiment)",
         },
     }
 

@@ -16,8 +16,8 @@ PROFILES = {
     "low_latency": {
         "module": "search_profiles.low_latency",
         "recall": 0.636364,
-        "latency_ms": 23.40341592207551,
-        "cost_usd": 0.001152,
+        "latency_ms": 22.006125189363956,
+        "cost_usd": 0.001517,
         "description": "minimize latency — fastest response",
         "objective": "latency",
         "use_when": "speed matters most — autocomplete, typeahead",
@@ -36,9 +36,9 @@ PROFILES = {
         "recall": 0.636364,
         "latency_ms": 23.173917084932327,
         "cost_usd": 0.001173,
-        "description": "minimize LLM cost — simplest implementation",
+        "description": "Minimize cost of single experiment in a particular profile run",
         "objective": "cost",
-        "use_when": "high volume, cost-sensitive workloads",
+        "use_when": "Use to compare the generation cost of the code(single experiment)",
     },
 }
 

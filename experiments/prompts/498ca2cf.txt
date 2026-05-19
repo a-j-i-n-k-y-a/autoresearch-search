@@ -1,0 +1,752 @@
+
+You are an autonomous research agent improving a movie search system.
+
+## Your instructions (program.md):
+# Search Autoresearch
+
+Autonomous agent improving a movie search system across three objectives.
+
+## Setup
+
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. `results.tsv` is created automatically with the correct header on first run.
+5. Confirm and begin.
+
+## The objective
+
+Three constraints tracked separately — never combined:
+- **recall@10** — primary. Higher is better. Max 1.0.
+- **latency_ms** — p50 per-query wall-clock. Under 30ms is ideal.
+- **llm_cost_usd** — cost of the API call that generated this code.
+
+Secondary quality metrics tracked on every eval (soft constraints in keep gate):
+- **mrr@10** — mean reciprocal rank. Must not drop below 97% of best.
+- **ndcg@10** — rank-discounted relevance. Informational.
+- **precision@10** — fraction of top-10 that are relevant. Must not drop below 95% of best.
+- **top1** — rank-1 hit rate. Must not drop below 95% of best.
+
+The active objective is passed at runtime via `--objective` flag.
+Improving on the active objective = keep. Otherwise = discard.
+
+Hard floor: **recall@10 must never drop below 0.50** on any kept experiment,
+regardless of objective.
+
+## Available resources in search()
+
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
+```
+
+- `df` — DataFrame: columns `title`, `overview`, `genres`, `vote_average`, `vote_count`, `text`
+- `bm25` — BM25Okapi built with `_bm25_tokenize` (accent removal → lowercase → punct strip → stopword filter → len>1 filter). **Call `bm25.get_scores(_bm25_tokenize(query))` — NOT `query.lower().split()`**. You cannot import `_bm25_tokenize` from prepare.py; replicate the pipeline in search.py.
+- `model` — SentenceTransformer(`"BAAI/bge-small-en-v1.5"`): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use `int()` or `np.int64()`, NEVER `np.int` (deprecated)
+- Do NOT import from other project files
+- `bm25` is already a BM25Okapi object — do NOT rebuild it
+- `model` is already a SentenceTransformer — do NOT reload it, call `model.encode([query])`
+- `index` is already a FAISS index — do NOT rebuild it, call `index.search(vec, k)`
+- `df` has columns: `title`, `overview`, `genres`, `vote_count`, `vote_average`
+- Function signature must be exactly: `def search(query, df, bm25, model, index, top_k=10)`
+- Return format must be: `df[...].to_dict("records")` with at least a `title` column
+- Never rerank more than top 100 candidates
+- Avoid nested loops over candidate pools
+- Never call `model.encode()` inside loops
+- Avoid repeated dataframe filtering
+
+## Benchmark structure
+
+Queries are split into four sets:
+
+| Split    | Size | Purpose                                              |
+|----------|------|------------------------------------------------------|
+| train    | 25   | Shown to agent in prompts as examples                |
+| dev      | 15   | Used for all keep/discard decisions during runs      |
+| test     | 10   | Final benchmark eval only — never used in loop       |
+| holdout  | 11   | Private — never shown to agent, never in history     |
+
+All optimization decisions are made on `split="dev"` only.
+Call `evaluate_holdout()` only after all optimization is complete.
+
+Queries are also tagged by slice: `exact_title`, `semantic`, `genre`,
+`long_tail`, `ambiguous`. Per-slice recall is printed after every eval
+and saved to `experiments/log.jsonl`.
+
+## Eval output format
+
+Every benchmark run prints:
+```
+  mrr@10=0.xxx  ndcg@10=0.xxx  precision@10=0.xxx  top1=0.xxx
+  ambiguous      : 0.xxx
+  exact_title    : 0.xxx
+  genre          : 0.xxx
+  long_tail      : 0.xxx
+  semantic       : 0.xxx
+  recall CI      : [0.xxx, 0.xxx]  noise=0.xxx
+  lat p50/p95/p99: xx.x/xx.x/xx.xms
+```
+
+`--eval-only` prints the full picture:
+```
+  recall@10    : 0.xxxxxx  (noise ±0.xxx)
+  latency p50  : xx.xms
+  latency p95  : xx.xms
+  latency p99  : xx.xms
+  mrr@10       : 0.xxxxxx
+  ndcg@10      : 0.xxxxxx
+  precision@10 : 0.xxxxxx
+  top1         : 0.xxxxxx
+```
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+```
+exp_id  commit  recall  latency_ms  latency_p95  latency_p99  llm_cost_usd  status  description
+```
+
+Status is `keep`, `discard`, `crash`, or `kept-subfloor` (retroactively
+marked kept rows that violated the recall floor under audit).
+
+Full experiment records including `search_py`, `full_metrics`, `slice_results`,
+and `constraint_trace` are saved to `experiments/log.jsonl`.
+Prompts are deduplicated by MD5 hash under `experiments/prompts/`.
+
+## Profile system
+
+Winning implementations are exported to `search_profiles/`:
+
+| Profile        | Objective | Seeded from  |
+|----------------|-----------|--------------|
+| `high_recall`  | recall    | —            |
+| `low_latency`  | latency   | high_recall  |
+| `balanced`     | pareto    | high_recall  |
+| `low_cost`     | cost      | balanced     |
+
+`search_profiles/registry.py` is auto-regenerated on every KEEP.
+Profiles below `RECALL_FLOOR = 0.50` are never exported.
+
+## Keep gate
+
+An experiment is kept only when ALL of the following pass for the active objective:
+
+**recall objective:**
+- `recall_ok`: new recall ≥ RECALL_FLOOR AND ≥ best × 0.95
+- `recall_improve`: improvement exceeds noise floor (`max(noise×0.5, 1/15)`)
+- `mrr_ok`: new mrr ≥ best mrr × 0.97
+- `top1_ok`: new top1 ≥ best top1 × 0.95
+- `precision_ok`: new precision ≥ best precision × 0.95
+
+**latency objective:** recall_ok + mrr_ok + top1_ok + precision_ok + latency improves > 0.05ms
+
+**cost objective:** recall_ok + mrr_ok + top1_ok + precision_ok + latency ≤ best×1.10 + cost improves
+
+**pareto objective:** recall drop ≤ 0.02 + latency ≤ best×1.10 + cost ≤ best×2.00 + any one improves + mrr_ok + top1_ok + precision_ok
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (`genres`, `vote_count`, `vote_average`)
+- Am I searching the right field? (`title` vs `overview` vs `genres` vs full `text`)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+- Does the failure report show a vocabulary mismatch (BM25 failing) or a reranking problem?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF) — correct formula: `1/(60+rank_a) + 1/(60+rank_b)`
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting (additive, normalized: `score += vote / max_votes * 0.2`)
+- Cosine similarity instead of L2
+- Pseudo-relevance feedback: embed top-5 results, use as additional query vectors
+- Separate embeddings for title vs overview, combine scores
+- Query expansion: 2-3 rephrasings, union FAISS results
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Regression awareness
+
+On every KEEP, a regression report prints which dev queries got worse.
+The agent prompt also includes a failure analysis of the current worst
+queries (recall < 1.0, sorted worst-first). Use this to reason about
+WHY retrieval is failing, not just THAT it is failing.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation.
+Keep experimenting until manually stopped.
+
+## Current search.py:
+```python
+import numpy as np
+from rank_bm25 import BM25Okapi
+import re
+
+def _bm25_tokenize(text):
+    return re.findall(r'\b\w\w+\b', text.lower())
+
+def search(query, df, bm25, model, index, top_k=10):
+    tokens = _bm25_tokenize(query)
+    bm25_scores = bm25.get_scores(tokens)
+    
+    query_vec = model.encode([query]).astype("float32")
+    dists, idx_s = index.search(query_vec, 200)
+    
+    k = 60
+    rrf_scores = np.zeros(len(df))
+    
+    # Efficient BM25 retrieval
+    idx_b = np.argsort(bm25_scores)[-200:]
+    for rank, i in enumerate(idx_b[::-1]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Semantic retrieval
+    for rank, i in enumerate(idx_s[0]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Genre boost: identify candidates and apply mask
+    candidates = np.where(rrf_scores > 0)[0]
+    query_genres = [t for t in tokens if t in ["action", "comedy", "drama", "horror", "sci-fi", "thriller", "romance", "western", "crime"]]
+    
+    if query_genres:
+        genres_col = df['genres'].values
+        for i in candidates:
+            genre_str = str(genres_col[i]).lower()
+            if any(g in genre_str for g in query_genres):
+                rrf_scores[i] *= 1.5
+                
+    # Popularity bias
+    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.01
+    
+    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]
+    
+    return df.iloc[top_indices].to_dict("records")
+```
+
+## Experiment history (last 10):
+- optimize retrieval cost by using a unified candidate pool of 200 with direct numpy scoring and genre-masking: recall=0.409  latency=23.3ms  cost=$0.001575  mrr=0.388  top1=0.364  precision=0.073  (discard)
+- optimize retrieval by incorporating title-specific BM25 weighting and refined genre affinity scoring into the RRF pipeline: recall=0.364  latency=28.5ms  cost=$0.001594  mrr=0.269  top1=0.182  precision=0.073  (discard)
+- use RRF with cross-field BM25 on text and genre-specific vote-boosted scoring for better long-tail recall: recall=0.364  latency=22.3ms  cost=$0.001614  mrr=0.348  top1=0.273  precision=0.064  (discard)
+- improve retrieval by incorporating title-weighted BM25 with dynamic genre-match boosting and popularity bias for better long-tail precision.: recall=0.455  latency=24.8ms  cost=$0.001607  mrr=0.323  top1=0.273  precision=0.082  (discard)
+- Use a combined text-field index with RRF-weighted genre and popularity boosting for efficient retrieval: recall=0.409  latency=23.9ms  cost=$0.001604  mrr=0.344  top1=0.273  precision=0.073  (discard)
+- optimize retrieval by using cross-field BM25 on text and genre-weighted RRF with popularity-adjusted rank fusion: recall=0.545  latency=23.8ms  cost=$0.001580  mrr=0.458  top1=0.364  precision=0.100  (discard)
+- implement balanced RRF with genre-intersection boosting and vote-adjusted score normalization to improve retrieval for long-tail and niche queries.: recall=0.318  latency=23.7ms  cost=$0.001613  mrr=0.280  top1=0.182  precision=0.064  (discard)
+- use BM25 on the full text field and combine with semantic search via normalized RRF to capture long-tail queries, using direct array indexing to minimize cost: recall=0.364  latency=23.9ms  cost=$0.001603  mrr=0.321  top1=0.273  precision=0.064  (discard)
+- use query-aware BM25 field-weighting with semantic RRF and genre-affinity boosting: recall=0.682  latency=22.6ms  cost=$0.001604  mrr=0.442  top1=0.273  precision=0.127  (discard)
+- implement genre-aware RRF with title-text field-weighted BM25 for balanced retrieval: recall=0.409  latency=29.0ms  cost=$0.001607  mrr=0.371  top1=0.273  precision=0.073  (discard)
+
+## Active objective: cost
+Reduce runtime retrieval complexity WITHOUT reducing retrieval quality.
+
+Do NOT:
+- remove BM25 entirely
+- collapse to pure FAISS retrieval
+- aggressively shrink candidate pools
+- simplify retrieval in ways that destroy recall
+
+Prefer SMALL structural optimizations such as:
+- reducing rerank pool sizes moderately
+- avoiding redundant encode() calls
+- simplifying weighting formulas
+- reducing dataframe operations
+- caching intermediate computations
+- pruning unnecessary reranking stages
+- lightweight candidate filtering
+- removing duplicated work
+
+Recall must stay above 0.5.
+
+## Three constraints tracked separately (never combined into one score):
+- recall@10      — fraction of expected movies found in top 10 results
+- latency_ms     — wall clock milliseconds per query
+- llm_cost_usd   — cost of this API call to generate the spec
+
+## ALREADY TRIED across all runs — do not repeat these:
+  - improve recall using RRF instead of weighted summation and better tokenization
+  - Improve recall by augmenting BM25 tokenization and using hybrid scores with balanced weightings
+  - replace hybrid scoring with reciprocal rank fusion (RRF) using a larger candidate pool for better recall coverage
+  - implement balanced RRF with genre-aware query expansion to handle semantic gaps
+  - implement hybrid retrieval with genre-based boost and improved semantic weighting
+  - use expanded text field and normalized hybrid scoring to improve recall
+  - add genre-match scoring and log-transformed popularity boost for retrieval relevance
+  - implement hybrid retrieval with explicit BM25 title boost and genre-weighted semantic similarity
+  - hybrid search with re-scoring using BM25, semantic vectors, and genre overlap
+  - Improve recall by increasing candidate pool size to 2000 for BM25 and adding a genre-aware re-ranking boost.
+  - hybrid search with improved semantic normalization and weighted genre boosting
+  - implement balanced RRF with hybrid candidate pooling and title-boosted BM25
+  - implement balanced RRF with BM25 title weight and genre-boosted re-ranking
+  - enhance retrieval by incorporating genre overlap and popularity into the ranking score for better precision and recall
+  - Use exact text-field BM25 scoring with semantic L2 similarity and a genre-aware popularity boost to improve recall.
+  - Implement RRF with candidate expansion and title-specific BM25 weighting
+  - use RRF to combine BM25 and semantic scores for better rank stability
+  - replace standard hybrid with RRF on expanded candidate set and prioritize title keyword matching
+  - use genre-aware candidate filtering and RRF to combine signals
+  - Boost recall by using a multi-field BM25 approach combined with genre-specific re-ranking and semantic search.
+  - use RRF with cross-field BM25 on title and overview, plus semantic similarity, increasing recall via broader candidate coverage
+  - implement hybrid retrieval with expanded FAISS index search and multi-feature score weighting
+  - implement late-stage re-ranking using BM25 and semantic scores with a focus on genre alignment to capture long-tail semantic relationships
+  - Implement boosted RRF with genre-aware similarity and expanded candidate pool to bridge semantic and keyword gaps
+  - implement hybrid retrieval with title-bias BM25 and normalized score fusion
+  - implement hybrid retrieval with expanded candidate pools, BM25 text weighting, and rank-normalization via MinMaxScaling
+  - implement hybrid retrieval with expanded candidate pools, BM25-based genre boosting, and rank-based fusion
+  - use query-specific hybrid weight adjustments and expanded candidate pool to boost recall
+  - Implement BM25 title-boosted hybrid search with rank-based fusion and popularity adjustment
+  - Implement BM25 with expanded candidate pool and log-scaled popularity-genre fusion
+  - enhance candidate selection using weighted multi-field BM25 (title/overview) and reciprocal rank fusion to improve recall
+  - implement genre-aware query expansion and BM25-semantic hybrid fusion with soft genre-boosting
+  - implement multi-scale BM25 fusion with genre-weighted semantic similarity and boost
+  - use query-specific genre filtering and aggressive RRF to prioritize exact title matches
+  - Use expanded BM25/FAISS candidate pools with RRF and genre-boosted ranking
+  - hybrid search with RRF and dynamic term-frequency weighting using BM25 and semantic embeddings
+  - Implement BM25 and vector retrieval with an expanded candidate pool and a weighted popularity-genre reranking boost.
+  - implement balanced RRF with genre-based boost and query-vector expansion
+  - Implement a two-stage hybrid search with expanded BM25/FAISS candidate pool and genre-similarity re-ranking to boost long-tail recall
+  - implement reranking with explicit genre overlap and vote-adjusted score balancing
+  - Implement RRF with expanded candidate pool and query-genre semantic expansion
+  - Implement RRF with augmented text field and vote-density adjusted scoring
+  - Implement RRF with candidate expansion, semantic reranking, and genre-based popularity bias
+  - implement cascaded retrieval with genre-overlap boosting and logarithmic popularity weighting
+  - implement late-stage re-ranking using BM25, semantic scores, and genre-match signals via an expanded candidate pool
+  - Implement genre-profile embedding injection and rank-based fusion with query-intent balancing
+  - implement cascaded retrieval with BM25-based re-ranking and score-based filtering
+  - use query-aware BM25 weighting and rank-based fusion with popularity-genre bias
+  - Use a balanced hybrid approach with logarithmic genre-popularity weighting and expanded candidate pool retrieval
+  - improve recall using a larger initial candidate pool and refined hybrid scoring with genre-text feature interaction
+  - Use a two-stage approach with BM25/FAISS retrieval followed by reranking using a combination of semantic similarity, title keyword density, and genre-alignment scores.
+  - implement genre-aware query expansion and weighted ensemble re-ranking
+  - Optimize retrieval by implementing a genre-boosted RRF with title-weighting and candidate expansion
+  - Use Log-Scaled Reciprocal Rank Fusion on separate BM25 and Semantic candidate streams with genre-based popularity prioritization
+  - Use BM25 cross-field search on title/overview, implement RRF with genre-based rank-booster to improve long-tail recall.
+  - Implement BM25 title/overview multi-field fusion with semantic reranking and rank-based genre-popularity boosting.
+  - Implement lexical-semantic fusion using BM25 query-expansion and a genre-aware re-ranking strategy that prioritizes exact title-token matches.
+  - Use a hybrid retrieval with query-aware term frequency boosting and genre-match re-ranking for improved recall.
+  - Implement lexical-semantic fusion with explicit genre-match boosting and non-linear RRF rank aggregation.
+  - Implement lexical-semantic fusion with genre-weighted RRF and dynamic term frequency expansion
+  - Use RRF with genre-aware rank boosting on a larger candidate pool to bridge lexical and semantic gaps.
+  - Implement lexical-semantic fusion with BM25/FAISS boosting and genre-aware re-ranking
+  - Implement lexical-semantic fusion with reciprocal rank fusion (RRF) and genre-based popularity enhancement.
+  - hybrid search with genre-boosted reranking and expanded FAISS/BM25 recall
+  - implement genre-aware query expansion and title-weighted reranking for better recall
+  - hybrid search with genre-boosted title keyword density and reranked RRF
+  - Implement lexical-semantic fusion with BM25 title/overview-field weighting and genre-aware re-ranking
+  - Utilize RRF for hybrid ranking with genre and popularity-weighted signals on an expanded candidate pool.
+  - Implement lexical-semantic fusion using BM25 and vector similarity with genre-conditioned re-ranking to boost retrieval for ambiguous queries.
+  - Use exact-field BM25 on titles, weighted fusion with semantic similarity, and genre-based candidate boosting for higher recall
+  - combine lexical and semantic streams with field-weighted BM25 and genre-similarity boost
+  - utilize BM25 on full text (title + overview + genres) and semantic reranking with popularity-aware score fusion
+  - implement genre-aware field-boosted BM25 with semantic reranking and logarithmic popularity dampening
+  - Implement lexical-semantic RRF with genre-based candidate boosting and title-token popularity weighting
+  - hybrid search with term-frequency-aware title boosting and genre-similarity re-ranking
+  - Use balanced RRF on BM25 and semantic pools with title-specific keyword boosting to improve ranking precision.
+  - Implement lexical-semantic fusion with BM25 title/overview-field weighting, genre-aware re-ranking, and dynamic candidate expansion.
+  - Implement lexical-semantic fusion with genre-affinity scoring and weight-tuned RRF.
+  - use query-aware genre vector bias and expanded candidate pool to bridge lexical-semantic gaps
+  - Implement lexical-semantic fusion with genre-query intersection and non-linear popularity-dampened scoring to improve precision for long-tail queries.
+  - enhance candidate selection using query-term genre boosting and popularity-aware reranking
+  - Use RRF on expanded candidates with query-genre alignment and title-boosted BM25
+  - combine lexical and semantic streams with field-weighted BM25 on titles and popularity-prioritized reranking
+  - Use genre-vector fusion with adaptive BM25 and high-precision RRF for improved recall
+  - use query-aware genre-title BM25 field weighting with aggressive candidate expansion and RRF-weighted scoring
+  - augment candidate pool with BM25/FAISS overlap and apply genre-weighted score fusion
+  - Implement lexical-semantic RRF with genre-intersection boosting and query-intent genre weighting
+  - Implement RRF with genre-aware similarity and expanded candidate pool to bridge semantic and keyword gaps
+  - leverage multi-field BM25 on text/genres and use RRF for robust rank fusion with vote-count bias
+  - Utilize RRF with genre-aware similarity and query-dependent semantic amplification to boost retrieval recall.
+  - implement balanced RRF with genre-intersection boosting and vote-adjusted rank scoring
+  - integrate title-weighted BM25 with genre-affinity reranking and normalized score fusion
+  - implement genre-aware RRF with popularity-weighted boosting
+  - implement hybrid retrieval with explicit title keyword boosting and genre-similarity reranking using RRF for signal aggregation
+  - hybrid search with term-boosted BM25 and genre-similarity re-ranking
+  - implement lexical-semantic RRF with title-boosted BM25 and genre-conditional reranking
+  - Combine RRF with query-intent genre vector boosting and log-popularity normalization
+  - implement hybrid retrieval with genre-conditional reranking and BM25 tokenization enhancement
+  - hybrid search with term-frequency-aware title/genre boosting and RRF
+  - Implement genre-aware reranking with BM25/Semantic fusion using a weighted popularity boost for long-tail relevance.
+  - use query-aware genre-vector expansion with BM25-semantic fusion and vote-density rank adjustment
+  - hybrid search with term-frequency-aware title-field BM25 and genre-conditional reranking via RRF
+  - implement genre-aware field-boosted BM25 and normalized reciprocal rank fusion with candidate pruning
+  - use query-specific genre-vector similarity fusion with popularity-weighted ranking
+  - add query-dependent genre boosting and vote-score dampening to improve precision
+  - Improve recall by expanding candidate pools and using a genre-aware weighted score fusion that prioritizes lexical precision.
+  - use query-specific genre-vector similarity fusion with popularity-weighted ranking and title-boosted BM25
+  - use RRF with field-weighted BM25 on title/text and semantic similarity with popularity-prioritized boosting
+  - implement balanced RRF with genre-intersection boosting and vote-adjusted rank scoring
+  - Implement lexical-semantic RRF with title-boosted BM25 and genre-conditional reranking using popularity-dampened scores
+  - improve candidate selection using query-term genre weighting and title-boosted bm25 scoring
+  - use RRF to combine BM25 and semantic signals, using a simple popularity-boosted rank fusion to improve candidate selection.
+  - simple hybrid retrieval with title-bias BM25 and normalized reciprocal rank fusion
+  - implement balanced RRF with genre-intersection boosting and vote-adjusted rank scoring
+  - implement hybrid retrieval with title-text field weighting and genre-aware reciprocal rank fusion
+  - Use RRF for hybrid fusion with title-text field-weighted BM25 and genre-aware popularity-weighted boosting
+  - Implement lexical-semantic fusion using RRF on title/text fields with genre-vector alignment and vote-count bias.
+  - Use balanced RRF with genre-intersection boosting and vote-adjusted rank scoring
+  - implement balanced RRF with genre-intersection boosting and vote-adjusted score rank fusion
+  - Implement lexical-semantic RRF with title-boosted BM25 and genre-conditional reranking
+  - Use balanced RRF with title-boosted BM25 and genre-similarity boost for candidate ranking
+  - Implement lexical-semantic fusion with RRF on title-weighted BM25 and genre-boosted semantic similarity
+  - hybrid search with RRF, genre-overlap boosting, and popularity dampening
+  - improve hybrid retrieval by combining BM25 and semantic scores using a normalized rank fusion with genre-specific boost
+  - use RRF on a larger candidate pool with normalized BM25 and semantic score fusion
+  - Implement lexical-semantic fusion using RRF with title-text field weighting and genre-popularity boosting
+  - Implement lexical-semantic fusion with boosted RRF and genre-overlap scoring
+  - Implement RRF with multi-field BM25 boosting and genre-affinity scoring
+  - implement genre-aware RRF with title-boosted BM25
+  - Use a combined title/text BM25 index with RRF rank-aggregation and genre-weighted vote bias
+  - use RRF with cross-field BM25 on title/text and semantic similarity to optimize rank stability
+  - Implement lexical-semantic fusion with boosted RRF, combining BM25 title/overview-field scoring with semantic similarity, and incorporating popularity-weighted genre affinity to refine ranking.
+  - Implement lexical-semantic fusion with RRF, query-term-weighted genre matching, and explicit popularity dampening.
+  - use RRF on a filtered candidate pool with genre-aware semantic and BM25 scoring
+  - balanced RRF with genre affinity and log-popularity weighting
+  - hybrid search with RRF and rank-based popularity/genre amplification
+  - implement balanced RRF with genre-intersection boosting and title-token density weighting
+  - RRF-based hybrid search with semantic-genre cross-attention and popularity-weighted ranking
+  - balanced hybrid search using RRF on title-boosted BM25 and semantic embeddings with genre-affinity reranking
+  - hybrid retrieval with title-token BM25 boosting and reciprocal rank fusion
+  - implement balanced RRF with genre-intersection boosting and vote-adjusted score rank fusion
+  - Use RRF on an expanded 500-candidate pool with direct genre-keyword intersection boosting to improve rank precision and recall.
+  - Hybrid search using BM25 and semantic vectors with genre-aware RRF ranking and popularity-boosted signal normalization
+  - use RRF on a larger 400-candidate pool with boosted title-match weights and genre-affinity scoring
+  - improved hybrid search with reciprocal rank fusion on top-k candidates and genre-aware popularity-weighted scoring
+  - implement hybrid retrieval with title-bias BM25 and genre-aware reranking using score normalization
+  - Use semantic retrieval as the primary signal with a genre-boosted BM25 re-ranker for top-tier candidates
+  - use weighted reciprocal rank fusion with explicit genre-match boosting and normalized vote-based popularity bias
+  - replace hybrid weighting with a multi-stage reranking pipeline using log-normalized genre-vote scoring and RRF
+  - Implement RRF with title-text field weighting and genre-conditioned similarity scoring to address rank-order failures
+  - Reduce candidate pool to 200 for faster latency while using a weighted BM25/Semantic fusion with genre-affinity bias to maintain recall.
+  - implement latency-optimized hybrid retrieval using pre-computed candidate pools and efficient rank-weighted aggregation
+  - optimize latency by reducing candidate pool and removing redundant dataframe operations
+  - Optimize latency by using a smaller candidate pool and simplified direct ranking.
+  - latency optimization through pool reduction and direct index scoring without unnecessary dataframe copies
+  - optimize latency by using local indexing and minimizing data manipulation
+  - optimize latency by reducing candidate pool, caching tokenization, and using minimal feature weighting
+  - optimize latency by using a streamlined candidate fusion approach with direct index querying and reduced dataframe overhead
+  - optimize latency by using a streamlined, pre-filtered candidate pool and direct indexing without redundant dataframe object creation
+  - optimize latency by using a combined text-field index and vector-distance ranking with simplified, efficient scoring
+  - Use a single-pass hybrid ranking with pre-indexed BM25 scores and normalized vector distances to reduce dataframe overhead and latency.
+  - replace hybrid scoring with query-dependent RRF for latency and precision
+  - optimize latency by using local NumPy arrays and reducing data conversion overhead during hybrid score calculation
+  - optimize latency by using fixed-size vector similarity and simplified score fusion
+  - latency optimization using direct index search and vectorized scoring with minimal dataframe operations
+  - optimize latency by using local indexing, vectorized score fusion, and efficient candidate pool management
+  - latency optimization using pre-filtered candidate pool and efficient ranking with minimal data conversion
+  - Latency-optimized retrieval using cached BM25 scores and direct vectorized indexing with minimal DataFrame overhead.
+  - use query-specific genre boost and efficient top-k candidate scoring to reduce latency while maintaining recall
+  - optimize latency by using direct index search, removing redundant candidate set unions, and streamlining BM25 tokenization for faster feature extraction
+  - Optimized hybrid search with pre-calculated BM25 and vector scores, using a direct indexing approach to minimize DataFrame overhead while maintaining recall through score-weighted candidate fusion.
+  - optimize latency by using local NumPy arrays, simplified ranking, and reduced dataframe overhead for candidate processing
+  - optimize latency by using a single-pass hybrid score with pre-sorted BM25 indices and efficient vector-index lookup.
+  - optimize latency by using a smaller candidate pool with a direct score-weighted fusion on pre-calculated indices.
+  - implement balanced RRF with popularity-weighted genre boost to improve rank stability and recall
+  - latency optimization through minimal feature calculation and balanced hybrid retrieval
+  - latency optimized hybrid retrieval with minimal overhead and prioritized BM25 scoring
+  - optimize latency by using local NumPy arrays, efficient candidate set union, and minimal feature calculation
+  - Latency-optimized hybrid retrieval using targeted vector-BM25 fusion with early-exit scoring on reduced candidate pools
+  - Optimized latency by replacing multi-step fusion with a single-pass RRF-like score on a consolidated 300-candidate pool, leveraging local numpy indexing to minimize dataframe overhead.
+  - Latency optimization using combined vector and BM25 index scoring with early-exit scoring on smaller pool size
+  - Latency-optimized retrieval using shared-index candidate pooling and direct score-fused numpy ranking.
+  - Latency-optimized hybrid retrieval using a focused candidate pool, pre-computed BM25 scores, and a lightweight, vectorized ranking pipeline.
+  - optimized latency by streamlining hybrid scoring and utilizing vectorized NumPy operations on a unified candidate pool
+  - Use a single-pass hybrid ranking with pre-indexed BM25 scores and normalized vector distances to reduce dataframe overhead and latency.
+  - latency optimization using pre-filtered candidate pool and direct indexing with minimal dataframe operations
+  - Optimize latency by using a combined retrieval pool size of 200, simplifying scoring via vectorized addition of BM25 and normalized distance, and reducing DataFrame operations by using column indexing.
+  - improve latency by using optimized array indexing and batching, while maintaining recall with genre-boosted scores
+  - reduce latency by pre-allocating index lookups and simplifying hybrid score fusion logic
+  - optimize latency by using a streamlined candidate union and reduced feature overhead
+  - Optimize latency by using a smaller initial candidate pool, simplified feature-vector scoring, and reducing redundant dataframe operations.
+  - optimize latency by using local indexing and vectorized hybrid scoring
+  - optimize latency by using a streamlined candidate pool of 250, direct array indexing, and simplified feature-weighted fusion
+  - Optimize latency by using a streamlined candidate pool of 200, simplifying scoring via vectorized addition of BM25 and normalized distance, and reducing DataFrame operations by using direct array indexing.
+  - Optimize latency by using a streamlined candidate pool of 200, simplifying BM25 and vector score fusion, and using vectorized numpy operations to minimize overhead.
+  - latency-optimized retrieval using cached BM25 and vectorized genre-boosted ranking on a unified candidate pool
+  - optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks to avoid redundant dataframe operations during ranking
+  - optimize latency by using local NumPy arrays, cached BM25 scores, and a lightweight weighted ranking pipeline without intermediate dataframe filtering
+  - optimize latency by using a streamlined candidate selection and direct array-based scoring to eliminate redundant dataframe processing
+  - optimize latency by using a combined 250 candidate pool with direct numpy array indexing and simplified scoring without pandas iloc or copy operations
+  - Refactor scoring to use direct numpy indexing and vectorized operations, avoiding pandas overhead and optimizing memory usage for cost efficiency.
+  - Use balanced RRF with popularity-weighted genre boost to improve retrieval recall and ranking stability.
+  - Use a larger candidate pool of 400 for hybrid retrieval with genre-overlap boosting and direct NumPy score normalization.
+  - implement genre-aware query expansion for hybrid search and streamline the candidate pool scoring pipeline
+  - implement genre-aware query expansion and weight fusion with popularity dampening
+  - use query-aware genre-boosted hybrid search with pre-computed popularity normalization to reduce dataframe overhead
+  - Optimize retrieval cost by using a unified candidate pool and simplifying rank fusion logic to reduce dataframe operations.
+  - utilize BM25 on the full 'text' field to improve coverage and simplify candidate pool retrieval to reduce latency and cost while maintaining recall stability.
+  - enhance cost efficiency by simplifying the candidate scoring pipeline using vectorized score normalization and pre-computed popularity weights
+  - implement lexical-semantic fusion with genre-query interaction and popularity-dampened score fusion
+  - Optimize retrieval cost by using a unified candidate pool and genre-affinity re-scoring without redundant dataframe operations.
+  - Optimize retrieval cost by using simplified score fusion with vectorized candidate retrieval and direct NumPy operations.
+  - hybrid search with genre-aware BM25 boosting and non-linear score fusion for better rank precision
+  - Optimize retrieval cost by using a unified candidate pool of 300 with simplified scoring and direct NumPy indexing to reduce redundant DataFrame overhead.
+  - refine hybrid scoring with logarithmic genre-popularity weight adjustment to improve precision without increasing latency
+  - Use a balanced RRF with popularity weighting and simplified candidate scoring to improve retrieval recall while maintaining latency and cost efficiency.
+  - Optimized retrieval by incorporating a genre-affinity multiplier into the BM25-semantic fusion pipeline using direct index access to reduce overhead.
+  - implement genre-aware RRF with title-boosted BM25 and popularity-dampened scoring
+  - Implement genre-aware reranking using direct numpy array indexing to eliminate redundant dataframe operations and improve cost/latency.
+  - implement genre-aware BM25 boosting with efficient candidate scoring and normalization
+  - Implement lexical-semantic RRF with genre-intersection boosting and pre-computed popularity normalization
+  - Improve cost and recall by using a genre-aware weighted BM25/Semantic fusion with a combined candidate pool and optimized numpy scoring.
+  - use genre-aware candidate boosting with a larger pool and normalized log-popularity to capture long-tail semantic relationships
+  - Use a larger candidate pool for BM25 and vector search with direct index lookups to preserve recall while streamlining scoring to maintain cost-efficiency.
+  - Use a combined text index for BM25 and optimize RRF scoring with a genre-similarity boost to improve recall.
+  - Use a combined text index for BM25 and optimize RRF scoring with a genre-similarity boost to improve recall.
+  - Implement lexical-semantic RRF with genre-intersection boosting and pre-computed popularity normalization
+  - use query-specific genre-vector similarity fusion and BM25 with title/overview fields to boost semantic alignment
+  - Replace hybrid weighted sum with Reciprocal Rank Fusion (RRF) and genre-match term-boosting to capture niche query intents more effectively.
+  - implement genre-aware BM25 boosting with efficient candidate scoring and normalization
+  - implement genre-aware RRF with improved BM25 title-token density boosting
+  - Improve cost and recall using a streamlined hybrid scoring mechanism with genre-based popularity boosting and direct numpy indexing.
+  - optimize retrieval by incorporating a genre-affinity multiplier using efficient NumPy array indexing and reducing dataframe overhead to improve cost efficiency while maintaining recall.
+  - optimize retrieval cost by using a unified candidate pool and genre-based popularity boosting with direct numpy operations
+  - optimize retrieval by using a broader, more robust hybrid scoring with genre-weighted RRF for improved recall and rank stability
+  - Improve cost and recall by using a genre-aware weighted score fusion that utilizes pre-computed genre masks to avoid redundant dataframe operations.
+  - optimize retrieval cost by using a unified candidate pool of 400 with direct numpy scoring and genre-masking
+  - Improve cost and recall by using a genre-aware reranking strategy on a unified candidate pool with direct index scoring.
+  - use RRF with cross-field BM25 on text and genres to improve semantic coverage and title-match precision
+  - Implement RRF with genre-intersection boosting and pre-computed popularity normalization using sparse BM25 and dense vector retrieval.
+  - optimize cost by reducing pool size and using a lightweight RRF-based scoring mechanism
+  - optimize retrieval with RRF and query-genre similarity boosting
+  - Streamline hybrid retrieval using RRF and genre-affinity boosting with direct NumPy operations to minimize latency and dataframe overhead.
+  - implement genre-aware query expansion for hybrid search and streamline the candidate pool scoring pipeline
+  - improve hybrid retrieval by using a genre-weighted BM25-semantic ensemble with log-popularity dampening to refine ranking precision and recall
+  - improve hybrid retrieval recall by using an expanded candidate pool and a genre-aware popularity boost to better match long-tail and ambiguous queries
+  - Improve cost and recall using a genre-aware weighted BM25/Semantic hybrid scoring with direct numpy indexing to eliminate redundant dataframe operations.
+  - utilize genre-aware BM25 and popularity boosting with an RRF-based scoring mechanism to optimize retrieval precision and cost
+  - Use a larger candidate pool of 500 with RRF and a genre-aware popularity boost to improve recall and rank stability while keeping overhead minimal.
+  - optimize cost by replacing redundant score normalization with raw score fusion and genre-masking for targeted boost
+  - use RRF with cross-field BM25 on text and genre-boosted semantic search to improve recall
+  - optimize retrieval with RRF and genre-boosted popularity scoring
+  - optimize retrieval with RRF and genre-specific BM25 score amplification
+  - Hybrid search using BM25 and vector similarity with genre-conditioned RRF to improve long-tail recall and efficiency.
+  - Implement genre-aware reranking with log-popularity dampening using direct numpy indexing to improve cost efficiency and precision
+  - Implement RRF with genre-boosted scores to improve recall and rank stability while reducing redundant dataframe overhead.
+  - use RRF with genre-masking and popularity-adjusted BM25/semantic score integration to improve long-tail retrieval
+  - implement genre-aware query expansion for hybrid search and streamline the candidate pool scoring pipeline
+  - optimize retrieval with RRF and genre-boosted popularity scoring
+  - RRF fusion with genre-weighted popularity scoring and streamlined indexing
+  - implement lexical-semantic RRF with genre-intersection boosting and vote-count normalization to capture niche intent and improve ranking precision
+  - hybrid search with term-frequency-aware title/genre BM25 weighting and RRF-based scoring
+  - use RRF with cross-field BM25 on text and genre-boosted semantic search to improve recall
+  - use RRF with cross-field BM25 on text and genres with genre-affinity boosting and popularity-aware reranking
+  - Implement RRF with genre-aware rank boosting on a larger candidate pool to improve recall.
+  - Use a hybrid RRF approach with explicit title keyword boosting and genre-affinity scoring to improve recall for long-tail and niche queries.
+  - implement genre-aware RRF with title-weighted BM25 and popularity dampening
+  - Implement RRF with genre-aware similarity and query-expanded semantic retrieval to address long-tail failures.
+  - hybrid search with RRF and genre-boosted popularity scoring
+  - Use RRF on an expanded 800-candidate pool with genre-intersection boosting and vote-score normalization to improve long-tail recall.
+  - implement genre-aware query expansion with Reciprocal Rank Fusion on expanded candidate pools
+  - use query-aware genre-vector similarity fusion and weighted BM25/Semantic scoring with log-popularity dampening to boost long-tail and genre-specific recall
+  - enhance candidate selection using query-term genre boosting and popularity-aware reranking
+  - Use RRF with genre-intersection boosting and title-token overlap scoring to improve rank precision for long-tail and ambiguous queries.
+  - hybrid search with RRF, genre-weighted popularity, and title-term frequency boosting to improve long-tail recall
+  - use RRF on a larger candidate pool with query-intent genre boosting and title-token frequency weighting
+  - use RRF on a wider candidate pool with genre-semantic cross-attention weights and popularity-dampened scoring to improve retrieval recall
+  - use RRF on a dual-pool retrieval with genre-conditional BM25 boosting and vote-score normalization to improve long-tail and genre-specific recall.
+  - Implement lexical-semantic fusion with RRF, query-term-weighted genre matching, and explicit popularity dampening
+  - use RRF with cross-field BM25 on text/genres and genre-affinity boosting
+  - Implement RRF with genre-intersection boosting and title-token overlap scoring
+  - use RRF on a broader candidate pool with genre-vector alignment and popularity-based rank adjustment
+  - Use genre-conditioned RRF with balanced lexical-semantic scoring and popularity-based candidate selection.
+  - use RRF on a dual-pool retrieval (BM25 + Semantic) with genre-intersection boosting and vote-score rank normalization to improve recall
+  - Implement lexical-semantic RRF with genre-intersection boosting and query-intent genre weighting to improve long-tail recall.
+  - Implement RRF with genre-intersection boosting and title-token density weighting to capture semantic and lexical nuance.
+  - use RRF to aggregate BM25, semantic, and genre-alignment signals with direct index-based popularity boosting
+  - use RRF on a dual-pool retrieval with genre-conditional scoring and normalized vote-count boosting to maximize recall.
+  - use RRF on a dual-pool retrieval with genre-conditional scoring and normalized vote-count boosting to maximize recall.
+  - use RRF on a dual-pool retrieval with genre-conditional BM25 boosting and vote-score normalization to improve long-tail and genre-specific recall.
+  - Implement RRF with genre-intersection boosting and title-token overlap scoring
+  - Implement RRF with expanded candidate pool and query-specific genre boosting based on text overlap and popularity.
+  - RRF-based hybrid search with cross-field genre-boosted text indexing and popularity-aware score fusion.
+  - use RRF to aggregate BM25, semantic, and genre-match scores with vote-based popularity boosting and a larger initial candidate pool
+  - use Reciprocal Rank Fusion on larger candidate pools with genre-aware query expansion to boost long-tail and niche semantic coverage
+  - use RRF on a 400-candidate pool with query-intent genre-vector alignment and title-boosted BM25
+  - Use a larger candidate pool of 1000, incorporate genre-intersection as a secondary reranking signal, and use balanced Reciprocal Rank Fusion to aggregate BM25 and Semantic scores.
+  - Implement RRF with genre-intersection boosting and query-intent genre weighting to improve long-tail recall.
+  - implement genre-aware RRF with title-boosted BM25 and popularity dampening
+  - Implement lexical-semantic RRF with genre-intersection boosting and query-intent genre weighting to improve recall for long-tail queries.
+  - Implement RRF with genre-intersection boosting and query-intent title-text multi-field weighting
+  - use RRF to aggregate BM25 on the full text field and semantic embeddings, with a genre-based candidate boost for niche query alignment
+  - improve recall using BM25 query expansion and genre-aware weighted RRF on a larger candidate pool
+  - implementation of hybrid retrieval using RRF on BM25 and semantic pools with genre-aware re-ranking
+  - improve recall using BM25-semantic hybrid with genre-weighted RRF and popularity dampening
+  - implement genre-aware RRF with title-boosted BM25 and popularity dampening
+  - Implement RRF with genre-aware query expansion and title-weighted candidate boosting to bridge lexical-semantic gaps.
+  - use RRF on a expanded dual-pool retrieval with genre-overlap boosting and popularity-dampened scoring
+  - Utilize BM25 on the full text field with a larger 1000-candidate pool and RRF score aggregation to improve recall for long-tail queries.
+  - incorporate genre-conditional semantic reranking with popularity-aware score fusion
+  - add query-dependent genre expansion and rank-normalized RRF with title boost
+  - use genre-aware reciprocal rank fusion with BM25 title boosting and popularity-dampened scoring
+  - Implement lexical-semantic RRF with genre-intersection boosting and popularity-aware reranking
+  - improve recall using genre-boosted RRF with multi-field BM25 expansion and popularity-based ranking
+  - Implement lexical-semantic fusion with RRF on expanded candidates, leveraging genres for score biasing and popularity for tie-breaking.
+  - implement genre-aware RRF with title-boosted BM25 and popularity-dampened scoring
+  - Implement lexical-semantic RRF with query-intent genre vector alignment and title-boosted BM25
+  - Implement lexical-semantic fusion with RRF on expanded candidates, using vote-weighted BM25 and genre-similarity re-ranking to boost long-tail recall.
+  - Hybrid retrieval using RRF on title/text-field BM25 and semantic embeddings, with explicit genre-match boosting and log-popularity normalization.
+  - use RRF with genre-aware BM25 field expansion and popularity-prioritized candidate ranking
+  - Hybrid retrieval using RRF on title/text-field BM25 and semantic embeddings, with explicit genre-match boosting and log-popularity normalization.
+  - boost recall using query-specific genre expansion and field-weighted RRF scoring
+  - implement lexical-semantic RRF with title-boosted BM25 and popularity-weighted genre affinity
+  - improve long-tail recall using genre-weighted BM25-semantic hybrid fusion and logarithmic popularity damping
+  - Use cross-field BM25 on text + genres with RRF and genre-affinity re-ranking
+  - Incorporate genre-based semantic boosting into the retrieval pipeline while optimizing candidate pooling and scoring for latency.
+  - use RRF with cross-field BM25 and genre-aware popularity-weighted scoring
+  - implement genre-boosted hybrid search with reciprocal rank fusion on an expanded candidate pool and direct numpy score normalization
+  - improve retrieval with query-aware genre vector bias and title-weighted hybrid RRF
+  - use query-expanded RRF with genre-intersection boosting to bridge lexical-semantic gaps
+  - optimize latency by using a simplified RRF scoring pipeline with a 200-candidate pool and pre-normalized score fusion
+  - optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-calculated genre masks to reduce dataframe overhead
+  - use query-expanded RRF with genre-intersection boosting to bridge lexical-semantic gaps
+  - latency optimization using direct array indexing and reduced candidate pool without redundant dataframe copies
+  - optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks to avoid redundant dataframe operations during ranking
+  - optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks to avoid redundant dataframe operations
+  - optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks to avoid redundant dataframe operations
+  - optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks, reducing redundant DataFrame operations.
+  - optimize latency by using a streamlined candidate pool of 150 with vectorized score fusion and reduced dataframe operations
+  - latency optimization using pre-filtered candidate pool and efficient ranking with minimal data conversion
+  - optimize latency by using a vectorized BM25-semantic hybrid with genre-based popularity dampening and direct numpy indexing for candidate fusion
+  - optimize latency by using a vectorized score fusion with a fixed 250-candidate pool and direct index-level scoring
+  - Latency optimization using pre-filtered candidate pool and direct index-level scoring with balanced BM25/Semantic fusion.
+  - Latency optimization using pre-filtered BM25 score lookup and vectorized score fusion to minimize dataframe overhead
+  - optimize latency by using pre-computed bm25 scores, reducing candidate pool to 150, and streamlining genre-affinity scoring with direct array operations.
+  - optimize latency by using a pre-allocated scores array and direct numpy operations for hybrid RRF, reducing dataframe access and function overhead
+  - optimize latency by using pre-computed BM25 indices and direct NumPy operations to avoid DataFrame overhead while maintaining robust retrieval with RRF.
+  - reduce latency by pre-tokenizing query, using a single-pass hybrid score, and avoiding redundant array creation during genre-masking.
+  - latency optimization by pre-calculating genre masks and using a unified 300-candidate pool with vectorized score fusion
+  - optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks, reducing dataframe overhead during score fusion
+  - implement genre-aware RRF with title-text BM25 field boosting and popularity-dampened score fusion
+  - hybrid search with term-frequency-aware title-field BM25 boosting and genre-aware rank fusion to improve long-tail and semantic recall
+  - hybrid search with genre-boosted title density andpopularity-weighted RRF for long-tail retrieval
+  - optimize retrieval with RRF, genre-specific BM25 weighting, and popularity dampening
+  - hybrid search with term-frequency-aware title-field BM25 boosting and genre-aware rank fusion for enhanced long-tail recall
+  - use weighted hybrid RRF with expanded text-field BM25 to improve semantic recall and rank stability
+  - optimize cost and recall by using a normalized hybrid scoring with popularity-dampened genre boosting and title-token overlap scoring
+  - Optimize retrieval cost by using a unified candidate pool of 300 with simplified scoring and direct NumPy indexing to reduce redundant DataFrame operations.
+  - hybrid search with genre-aware RRF and title-keyword density prioritization
+  - hybrid search with term-frequency-aware title-field BM25 boosting, genre-aware RRF, and log-popularity dampening to optimize cost and relevance
+  - prioritize semantic retrieval with a genre-boosted re-ranking and reduced redundant dataframe operations to optimize cost
+  - optimize retrieval cost by using a unified candidate pool of 200 with direct numpy scoring and genre-masking
+  - optimize retrieval by incorporating title-specific BM25 weighting and refined genre affinity scoring into the RRF pipeline
+  - use RRF with cross-field BM25 on text and genre-specific vote-boosted scoring for better long-tail recall
+  - improve retrieval by incorporating title-weighted BM25 with dynamic genre-match boosting and popularity bias for better long-tail precision.
+  - Use a combined text-field index with RRF-weighted genre and popularity boosting for efficient retrieval
+  - optimize retrieval by using cross-field BM25 on text and genre-weighted RRF with popularity-adjusted rank fusion
+  - implement balanced RRF with genre-intersection boosting and vote-adjusted score normalization to improve retrieval for long-tail and niche queries.
+  - use BM25 on the full text field and combine with semantic search via normalized RRF to capture long-tail queries, using direct array indexing to minimize cost
+  - use query-aware BM25 field-weighting with semantic RRF and genre-affinity boosting
+  - implement genre-aware RRF with title-text field-weighted BM25 for balanced retrieval
+
+## AVOID FAILED LATENCY COLLAPSES
+
+Do NOT repeat:
+- pure FAISS-only retrieval
+- removing BM25 entirely
+- minimalist vector-only search
+- ultra-small candidate pools that collapse recall
+- retrieval simplification that destroys semantic coverage
+
+If your idea is similar to any of the above, pick something structurally different.
+
+## EXISTING CODE FEATURES (reference only)
+The current implementation already contains:
+  - Import: numpy
+  - Import: from rank_bm25 import ...
+  - Import: re
+  - Function: _bm25_tokenize()
+Guidelines:
+- Preserve the existing search() function signature.
+- Existing imports may still be required.
+- Do NOT remove imports unless you are certain they are unused.
+- Avoid duplicate imports.
+- Preserve compatibility with the evaluation pipeline.
+- Modify only what is necessary to improve the objective.
+
+## CURRENT FAILURE ANALYSIS — queries where recall < 1.0 (worst first):
+  Query   : space western bounty hunter frontier planets
+  Recall  : 0.00  MRR: 0.00  Top1: 0  First hit: rank none
+  Got     : [the bounty hunter, for a few dollars more, the hateful eight, django unchained, one for the money]
+
+  Query   : teenage high school prom coming of age awkward
+  Recall  : 0.00  MRR: 0.00  Top1: 0  First hit: rank none
+  Got     : [american pie, the prom, prom night, sixteen candles, not another teen movie]
+
+  Query   : heist bank robbery crew planning elaborate escape
+  Recall  : 0.00  MRR: 0.00  Top1: 0  First hit: rank none
+  Got     : [den of thieves, dog day afternoon, the ladykillers, un flic, ocean s eight]
+
+  Query   : mental illness bipolar schizophrenia family struggle
+  Recall  : 0.50  MRR: 1.00  Top1: 1  First hit: rank 1
+  Got     : [a beautiful mind, words on bathroom walls, mommy dead and dearest, the devil and daniel johnston, marriage story]
+
+  Query   : princess fairy tale kingdom true love musical
+  Recall  : 0.50  MRR: 0.20  Top1: 0  First hit: rank 5
+  Got     : [the princess bride, frozen, sleeping beauty, enchanted, cinderella]
+
+  Query   : lawyer courtroom trial justice wrongful conviction
+  Recall  : 0.50  MRR: 0.14  Top1: 0  First hit: rank 7
+  Got     : [conviction, and justice for all, oculus, the reader, red corner]
+
+  Query   : hitman assassin contract killing redemption
+  Recall  : 0.50  MRR: 0.14  Top1: 0  First hit: rank 7
+  Got     : [hitman agent 47, hitman, 24 hours to live, killers, assassins]
+
+  Query   : slasher masked killer teenagers summer camp
+  Recall  : 0.50  MRR: 0.33  Top1: 0  First hit: rank 3
+  Got     : [you might be the killer, scary movie, friday the 13th, scream, prom night]
+
+Use this to reason about WHY retrieval is failing, not just THAT it is failing.
+Ask yourself:
+- Are failures clustered in a specific slice (long_tail, ambiguous)?
+- Does the retrieved list suggest a vocabulary mismatch (BM25 failing)?
+- Does rank of first hit suggest reranking is the problem, not retrieval?
+- Would genre/vote signals push the right result higher?
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated)
+- Do NOT import from other project files
+
+## OUTPUT FORMAT (STRICT)
+
+The FIRST line of your response MUST be EXACTLY in this format:
+
+# DESCRIPTION: short description here
+
+Example:
+# DESCRIPTION: add genre weighting
+
+Immediately after that line, output the FULL Python file.
+
+Do NOT include:
+- markdown fences
+- explanations
+- prose
+- bullet points
+- comments before DESCRIPTION
+- partial diffs
+
+Your response MUST begin with:
+# DESCRIPTION:

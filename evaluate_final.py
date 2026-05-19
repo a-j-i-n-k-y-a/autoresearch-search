@@ -39,8 +39,15 @@ def run_final_eval(profile_name):
     print(f"Dev recall@10     : {dev_recall:.4f}  (what optimizer used)")
 
     # holdout score — honest eval
-    holdout_recall, holdout_slices = evaluate_holdout(search_fn, df, bm25, model, index)
+    # AFTER
+    holdout_metrics, holdout_slices = evaluate_holdout(search_fn, df, bm25, model, index)
+    holdout_recall = holdout_metrics["recall"]
     print(f"Holdout recall@10 : {holdout_recall:.4f}  (never seen by agent)")
+    print(f"  mrr@10          : {holdout_metrics['mrr']:.4f}")
+    print(f"  ndcg@10         : {holdout_metrics['ndcg']:.4f}")
+    print(f"  precision@10    : {holdout_metrics['precision']:.4f}")
+    print(f"  top1            : {holdout_metrics['top1']:.4f}")
+
 
     # gap — tells you how much the optimizer overfit
     gap = dev_recall - holdout_recall
@@ -51,8 +58,9 @@ def run_final_eval(profile_name):
 
     # per slice breakdown
     print("\nHoldout recall by slice:")
-    for slice_name, slice_recall in sorted(holdout_slices.items()):
-        print(f"  {slice_name:<15}: {slice_recall:.3f}")
+    # AFTER
+    for slice_name, slice_metrics in sorted(holdout_slices.items()):
+        print(f"  {slice_name:<15}: recall={slice_metrics['recall']:.3f}  mrr={slice_metrics['mrr']:.3f}  top1={slice_metrics['top1']:.3f}")
 
 
 if __name__ == "__main__":

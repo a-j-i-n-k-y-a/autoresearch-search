@@ -337,3 +337,46 @@ exp_335	discarded	0.090909	22.8	27.7	29.4	0.001482	discard	latency optimization 
 exp_336	crash	0.000000	inf			0.001497	crash	optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks to avoid redundant dataframe operations during ranking
 exp_337	discarded	0.318182	22.3	26.5	30.3	0.001502	discard	optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks to avoid redundant dataframe operations
 exp_338	discarded	0.363636	22.7	25.9	26.7	0.001510	discard	optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks to avoid redundant dataframe operations
+exp_339	06ac556	0.636364	22.0	26.5	26.9	0.001517	keep	optimize latency by using a streamlined candidate pool of 200 with direct numpy-based RRF and pre-computed genre masks, reducing redundant DataFrame operations.
+exp_340	discarded	0.409091	22.5	27.1	39.1	0.001513	discard	optimize latency by using a streamlined candidate pool of 150 with vectorized score fusion and reduced dataframe operations
+exp_341	discarded	0.454545	23.1	27.4	54.4	0.001506	discard	latency optimization using pre-filtered candidate pool and efficient ranking with minimal data conversion
+exp_342	discarded	0.454545	23.2	28.0	73.6	0.001551	discard	optimize latency by using a vectorized BM25-semantic hybrid with genre-based popularity dampening and direct numpy indexing for candidate fusion
+exp_343	discarded	0.590909	24.7	39.0	41.0	0.001545	discard	optimize latency by using a vectorized score fusion with a fixed 250-candidate pool and direct index-level scoring
+exp_344	discarded	0.545455	23.9	26.4	29.1	0.001567	discard	Latency optimization using pre-filtered candidate pool and direct index-level scoring with balanced BM25/Semantic fusion.
+exp_345	discarded	0.318182	1771.8	2296.0	2332.5	0.001547	discard	Latency optimization using pre-filtered BM25 score lookup and vectorized score fusion to minimize dataframe overhead
+exp_346	discarded	0.363636	22.9	26.5	28.7	0.001563	discard	optimize latency by using pre-computed bm25 scores, reducing candidate pool to 150, and streamlining genre-affinity scoring with direct array operations.
+exp_347	discarded	0.227273	23.4	26.5	27.6	0.001517	discard	optimize latency by using a pre-allocated scores array and direct numpy operations for hybrid RRF, reducing dataframe access and function overhead
+exp_348	discarded	0.363636	24.3	28.0	33.1	0.001531	discard	optimize latency by using pre-computed BM25 indices and direct NumPy operations to avoid DataFrame overhead while maintaining robust retrieval with RRF.
+exp_349	discarded	0.181818	23.3	26.9	28.8	0.001542	discard	reduce latency by pre-tokenizing query, using a single-pass hybrid score, and avoiding redundant array creation during genre-masking.
+exp_350	crash	0.000000	inf			0.001529	crash	latency optimization by pre-calculating genre masks and using a unified 300-candidate pool with vectorized score fusion
+exp_351	discarded	0.636364	24.1	28.9	38.9	0.001573	discard	optimize latency by using local numpy pre-indexing for BM25 and pre-computed genre masks, reducing dataframe overhead during score fusion
+exp_352	discarded	0.545455	33.2	36.0	36.8	0.001555	discard	implement genre-aware RRF with title-text BM25 field boosting and popularity-dampened score fusion
+exp_353	discarded	0.590909	22.4	27.9	54.2	0.001556	discard	hybrid search with term-frequency-aware title-field BM25 boosting and genre-aware rank fusion to improve long-tail and semantic recall
+exp_354	discarded	0.318182	23.9	28.6	30.7	0.001574	discard	hybrid search with genre-boosted title density andpopularity-weighted RRF for long-tail retrieval
+exp_355	discarded	0.545455	22.7	31.1	44.8	0.001589	discard	optimize retrieval with RRF, genre-specific BM25 weighting, and popularity dampening
+exp_356	discarded	0.500000	23.8	37.7	42.5	0.001571	discard	hybrid search with term-frequency-aware title-field BM25 boosting and genre-aware rank fusion for enhanced long-tail recall
+exp_357	discarded	0.636364	22.6	26.5	27.5	0.001557	discard	use weighted hybrid RRF with expanded text-field BM25 to improve semantic recall and rank stability
+exp_358	discarded	0.545455	23.4	26.2	27.0	0.001572	discard	optimize cost and recall by using a normalized hybrid scoring with popularity-dampened genre boosting and title-token overlap scoring
+exp_359	discarded	0.500000	22.3	27.1	29.1	0.001561	discard	Optimize retrieval cost by using a unified candidate pool of 300 with simplified scoring and direct NumPy indexing to reduce redundant DataFrame operations.
+exp_360	discarded	0.318182	32.2	35.3	86.5	0.001588	discard	hybrid search with genre-aware RRF and title-keyword density prioritization
+exp_361	discarded	0.454545	23.5	27.1	30.8	0.001557	discard	hybrid search with term-frequency-aware title-field BM25 boosting, genre-aware RRF, and log-popularity dampening to optimize cost and relevance
+exp_362	discarded	0.318182	23.2	26.0	27.5	0.001566	discard	prioritize semantic retrieval with a genre-boosted re-ranking and reduced redundant dataframe operations to optimize cost
+exp_363	discarded	0.409091	23.3	26.5	27.3	0.001575	discard	optimize retrieval cost by using a unified candidate pool of 200 with direct numpy scoring and genre-masking
+exp_364	discarded	0.363636	28.5	32.2	40.9	0.001594	discard	optimize retrieval by incorporating title-specific BM25 weighting and refined genre affinity scoring into the RRF pipeline
+exp_365	discarded	0.363636	22.3	37.2	53.2	0.001614	discard	use RRF with cross-field BM25 on text and genre-specific vote-boosted scoring for better long-tail recall
+exp_366	discarded	0.454545	24.8	28.5	30.2	0.001607	discard	improve retrieval by incorporating title-weighted BM25 with dynamic genre-match boosting and popularity bias for better long-tail precision.
+exp_367	discarded	0.409091	23.9	27.0	28.9	0.001604	discard	Use a combined text-field index with RRF-weighted genre and popularity boosting for efficient retrieval
+exp_368	discarded	0.545455	23.8	27.6	28.4	0.001580	discard	optimize retrieval by using cross-field BM25 on text and genre-weighted RRF with popularity-adjusted rank fusion
+exp_369	discarded	0.318182	23.7	27.6	28.4	0.001613	discard	implement balanced RRF with genre-intersection boosting and vote-adjusted score normalization to improve retrieval for long-tail and niche queries.
+exp_370	discarded	0.363636	23.9	28.2	37.9	0.001603	discard	use BM25 on the full text field and combine with semantic search via normalized RRF to capture long-tail queries, using direct array indexing to minimize cost
+exp_371	discarded	0.681818	22.6	26.6	27.0	0.001604	discard	use query-aware BM25 field-weighting with semantic RRF and genre-affinity boosting
+exp_372	discarded	0.409091	29.0	31.9	32.4	0.001607	discard	implement genre-aware RRF with title-text field-weighted BM25 for balanced retrieval
+exp_373	discarded	0.409091	24.6	28.6	29.5	0.001607	discard	Use RRF on a 400-candidate pool with query-intent genre weighting and title-text BM25 field boosting.
+exp_374	discarded	0.363636	24.3	28.6	37.1	0.001618	discard	use RRF on a dual-pool retrieval with BM25 title-boosted weighting and direct numpy-indexed popularity normalization to improve long-tail and genre-specific recall while minimizing cost.
+exp_375	discarded	0.545455	23.1	28.9	30.0	0.001631	discard	use weighted RRF with title-text field BM25 and genre-vote signal integration to capture semantic and long-tail nuance
+exp_376	discarded	0.409091	22.5	26.5	33.0	0.001616	discard	optimize retrieval by using direct index access to popularity and genre signals without full dataframe filtering to reduce latency and cost
+exp_377	discarded	0.409091	22.9	27.3	29.4	0.001625	discard	optimize retrieval by incorporating genre-aware semantic vector expansion and BM25 term frequency boosting to capture niche query intents without increasing latency
+exp_378	discarded	0.272727	23.5	26.9	31.0	0.001644	discard	add query-dependent genre embedding boost and streamline hybrid scoring for cost efficiency
+exp_379	discarded	0.500000	23.1	35.7	52.7	0.001646	discard	Use RRF with genre-intersection boosting and pre-computed popularity normalization on a unified candidate pool to improve retrieval for long-tail queries without increasing latency.
+exp_380	discarded	0.318182	23.3	26.5	27.5	0.001625	discard	optimize retrieval by using a consolidated candidate pool with normalized hybrid scoring and direct numpy indexing to reduce overhead and cost
+exp_381	discarded	0.636364	22.9	26.6	29.9	0.001639	discard	use query-specific genre expansion and streamlined RRF scoring with pre-calculated popularity signals to minimize overhead and improve retrieval precision
