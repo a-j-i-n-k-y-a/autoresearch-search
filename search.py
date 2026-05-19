@@ -7,36 +7,42 @@ def _bm25_tokenize(text):
 
 def search(query, df, bm25, model, index, top_k=10):
     tokens = _bm25_tokenize(query)
-    
-    # Use pre-computed BM25 scores
     bm25_scores = bm25.get_scores(tokens)
     
-    # Retrieve candidates using BM25 and Semantic search
-    pool_size = 250
-    idx_b = np.argpartition(bm25_scores, -pool_size)[-pool_size:]
-    
     query_vec = model.encode([query]).astype("float32")
-    dists, idx_s = index.search(query_vec, pool_size)
+    dists, idx_s = index.search(query_vec, 300)
     
-    # Merge candidates
-    candidates = np.unique(np.concatenate([idx_b, idx_s[0]]))
+    # RRF parameters
+    k = 60
     
-    # Normalize scores
-    s_b = bm25_scores[candidates]
-    s_b = (s_b - s_b.min()) / (s_b.max() - s_b.min() + 1e-9)
+    # Initialize RRF scores
+    rrf_scores = np.zeros(len(df))
     
-    # Map vector distances
-    dist_map = {idx: d for idx, d in zip(idx_s[0], dists[0])}
-    s_s = np.array([1.0 / (1.0 + dist_map.get(i, 5.0)) for i in candidates])
+    # BM25 contribution
+    idx_b = np.argsort(bm25_scores)[-300:]
+    for rank, i in enumerate(idx_b[::-1]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Semantic contribution
+    for rank, i in enumerate(idx_s[0]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Genre-intersection boosting (simple boolean check)
+    # Identify candidate indices with non-zero RRF scores
+    candidates = np.where(rrf_scores > 0)[0]
     
-    # Popularity boost
-    pop = np.log1p(df['vote_count'].iloc[candidates].values)
+    # Apply genre boost: if genre tokens exist in query, boost matches
+    query_genres = [t for t in tokens if t in ["action", "comedy", "drama", "horror", "sci-fi", "thriller", "romance", "western", "crime"]]
+    if query_genres:
+        for i in candidates:
+            # Check if any query genre is in the dataframe genre string
+            genre_str = str(df['genres'].iloc[i]).lower()
+            if any(g in genre_str for g in query_genres):
+                rrf_scores[i] *= 1.5
+                
+    # Popularity bias
+    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.01
     
-    # Weighted fusion
-    final_scores = (0.5 * s_b) + (0.5 * s_s) + (0.05 * pop)
+    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]
     
-    # Get top_k
-    top_indices = candidates[np.argsort(final_scores)[-top_k:][::-1]]
-    
-    res = df.iloc[top_indices].copy()
-    return res.to_dict("records")
+    return df.iloc[top_indices].to_dict("records")

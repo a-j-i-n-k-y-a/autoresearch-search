@@ -1195,7 +1195,7 @@ updated     : {time.strftime("%Y-%m-%dT%H:%M:%S")}
 |--------|----------|------|
 | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
 | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
-| llm_cost | {"n/a" if baseline_metrics['llm_cost_usd'] == float("inf") else f"${baseline_metrics['llm_cost_usd']:.6f}"} | {"n/a" if best_metrics['llm_cost_usd'] == float("inf") else f"${best_metrics['llm_cost_usd']:.6f}"} |
+| optimization_cost_usd | {"n/a" if baseline_metrics['llm_cost_usd'] == float("inf") else f"${baseline_metrics['llm_cost_usd']:.6f}"} | {"n/a" if best_metrics['llm_cost_usd'] == float("inf") else f"${best_metrics['llm_cost_usd']:.6f}"} |
 
 ## Progress
 - Experiments kept : {n_kept}
@@ -1303,6 +1303,8 @@ Write a concise ARCHITECTURE.md with sections:
 |--------|----------|-------|
 | recall@10 | {baseline_metrics['recall']:.3f} | {best_metrics['recall']:.3f} |
 | latency_ms | {baseline_metrics['latency_ms']:.1f} | {best_metrics['latency_ms']:.1f} |
+| optimization_cost_usd | {"n/a" if baseline_metrics['llm_cost_usd'] == float("inf") else f"${baseline_metrics['llm_cost_usd']:.6f}"} | {"n/a" if best_metrics['llm_cost_usd'] == float("inf") else f"${best_metrics['llm_cost_usd']:.6f}"} |
+
 ## How to run
 STRICT RULES — violations undermine scientific integrity:
 - Every claim about WHY something works MUST cite a metric delta.
