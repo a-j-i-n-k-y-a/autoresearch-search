@@ -31,6 +31,15 @@ PROFILES = {
         "objective": "pareto",
         "use_when": "default — general search, no specific SLA",
     },
+    "low_cost": {
+        "module": "search_profiles.low_cost",
+        "recall": 0.590909,
+        "latency_ms": 23.06687505915761,
+        "cost_usd": 0.00121,
+        "description": "minimize LLM cost — simplest implementation",
+        "objective": "cost",
+        "use_when": "high volume, cost-sensitive workloads",
+    },
 }
 
 # Fallback when constraint is unknown or profile file missing

@@ -205,3 +205,5 @@ exp_203	discarded	0.545455	29.9	32.6	33.9	0.001227	discard	Use balanced RRF with
 exp_204	discarded	0.227273	23.6	26.6	27.4	0.001194	discard	Use a larger candidate pool of 400 for hybrid retrieval with genre-overlap boosting and direct NumPy score normalization.
 exp_205	discarded	0.318182	22.9	27.7	32.6	0.001188	discard	implement genre-aware query expansion for hybrid search and streamline the candidate pool scoring pipeline
 exp_206	discarded	0.636364	28.5	35.5	106.5	0.001220	discard	implement genre-aware query expansion and weight fusion with popularity dampening
+exp_207	e2e2ad5	0.590909	23.1	27.0	28.2	0.001210	keep	use query-aware genre-boosted hybrid search with pre-computed popularity normalization to reduce dataframe overhead
+exp_208	discarded	0.318182	24.5	29.9	44.6	0.001207	discard	Optimize retrieval cost by using a unified candidate pool and simplifying rank fusion logic to reduce dataframe operations.
