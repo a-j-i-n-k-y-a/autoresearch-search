@@ -1,0 +1,367 @@
+
+You are an autonomous research agent improving a movie search system.
+
+## Your instructions (program.md):
+# Search Autoresearch
+
+Autonomous agent improving a movie search system across three objectives.
+
+## Setup
+
+1. Agree on a run tag (e.g. `may10`), create branch: `git checkout -b autoresearch/<tag>`
+2. Read these files:
+   - `prepare.py` — fixed constants, data, evaluation. DO NOT MODIFY.
+   - `search.py` — the only file you edit.
+3. Verify `data/movies.pkl` and `data/faiss.index` exist. If not, tell the human to run `python prepare.py`.
+4. `results.tsv` is created automatically with the correct header on first run.
+5. Confirm and begin.
+
+## The objective
+
+Three constraints tracked separately — never combined:
+- **recall@10** — primary. Higher is better. Max 1.0.
+- **latency_ms** — p50 per-query wall-clock. Under 30ms is ideal.
+- **llm_cost_usd** — cost of the API call that generated this code.
+
+Secondary quality metrics tracked on every eval (soft constraints in keep gate):
+- **mrr@10** — mean reciprocal rank. Must not drop below 97% of best.
+- **ndcg@10** — rank-discounted relevance. Informational.
+- **precision@10** — fraction of top-10 that are relevant. Must not drop below 95% of best.
+- **top1** — rank-1 hit rate. Must not drop below 95% of best.
+
+The active objective is passed at runtime via `--objective` flag.
+Improving on the active objective = keep. Otherwise = discard.
+
+Hard floor: **recall@10 must never drop below 0.50** on any kept experiment,
+regardless of objective.
+
+## Available resources in search()
+
+Fixed signature — never change it:
+```python
+def search(query, df, bm25, model, index, top_k=10):
+```
+
+- `df` — DataFrame: columns `title`, `overview`, `genres`, `vote_average`, `vote_count`, `text`
+- `bm25` — BM25Okapi built with `_bm25_tokenize` (accent removal → lowercase → punct strip → stopword filter → len>1 filter). **Call `bm25.get_scores(_bm25_tokenize(query))` — NOT `query.lower().split()`**. You cannot import `_bm25_tokenize` from prepare.py; replicate the pipeline in search.py.
+- `model` — SentenceTransformer(`"BAAI/bge-small-en-v1.5"`): `model.encode([query])`
+- `index` — faiss.IndexFlatL2: `index.search(vec.astype("float32"), k)`
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use `int()` or `np.int64()`, NEVER `np.int` (deprecated)
+- Do NOT import from other project files
+- `bm25` is already a BM25Okapi object — do NOT rebuild it
+- `model` is already a SentenceTransformer — do NOT reload it, call `model.encode([query])`
+- `index` is already a FAISS index — do NOT rebuild it, call `index.search(vec, k)`
+- `df` has columns: `title`, `overview`, `genres`, `vote_count`, `vote_average`
+- Function signature must be exactly: `def search(query, df, bm25, model, index, top_k=10)`
+- Return format must be: `df[...].to_dict("records")` with at least a `title` column
+- Never rerank more than top 100 candidates
+- Avoid nested loops over candidate pools
+- Never call `model.encode()` inside loops
+- Avoid repeated dataframe filtering
+
+## Benchmark structure
+
+Queries are split into four sets:
+
+| Split    | Size | Purpose                                              |
+|----------|------|------------------------------------------------------|
+| train    | 25   | Shown to agent in prompts as examples                |
+| dev      | 15   | Used for all keep/discard decisions during runs      |
+| test     | 10   | Final benchmark eval only — never used in loop       |
+| holdout  | 11   | Private — never shown to agent, never in history     |
+
+All optimization decisions are made on `split="dev"` only.
+Call `evaluate_holdout()` only after all optimization is complete.
+
+Queries are also tagged by slice: `exact_title`, `semantic`, `genre`,
+`long_tail`, `ambiguous`. Per-slice recall is printed after every eval
+and saved to `experiments/log.jsonl`.
+
+## Eval output format
+
+Every benchmark run prints:
+```
+  mrr@10=0.xxx  ndcg@10=0.xxx  precision@10=0.xxx  top1=0.xxx
+  ambiguous      : 0.xxx
+  exact_title    : 0.xxx
+  genre          : 0.xxx
+  long_tail      : 0.xxx
+  semantic       : 0.xxx
+  recall CI      : [0.xxx, 0.xxx]  noise=0.xxx
+  lat p50/p95/p99: xx.x/xx.x/xx.xms
+```
+
+`--eval-only` prints the full picture:
+```
+  recall@10    : 0.xxxxxx  (noise ±0.xxx)
+  latency p50  : xx.xms
+  latency p95  : xx.xms
+  latency p99  : xx.xms
+  mrr@10       : 0.xxxxxx
+  ndcg@10      : 0.xxxxxx
+  precision@10 : 0.xxxxxx
+  top1         : 0.xxxxxx
+```
+
+## Logging
+
+`results.tsv` columns (tab-separated):
+```
+exp_id  commit  recall  latency_ms  latency_p95  latency_p99  llm_cost_usd  status  description
+```
+
+Status is `keep`, `discard`, `crash`, or `kept-subfloor` (retroactively
+marked kept rows that violated the recall floor under audit).
+
+Full experiment records including `search_py`, `full_metrics`, `slice_results`,
+and `constraint_trace` are saved to `experiments/log.jsonl`.
+Prompts are deduplicated by MD5 hash under `experiments/prompts/`.
+
+## Profile system
+
+Winning implementations are exported to `search_profiles/`:
+
+| Profile        | Objective | Seeded from  |
+|----------------|-----------|--------------|
+| `high_recall`  | recall    | —            |
+| `low_latency`  | latency   | high_recall  |
+| `balanced`     | pareto    | high_recall  |
+| `low_cost`     | cost      | balanced     |
+
+`search_profiles/registry.py` is auto-regenerated on every KEEP.
+Profiles below `RECALL_FLOOR = 0.50` are never exported.
+
+## Keep gate
+
+An experiment is kept only when ALL of the following pass for the active objective:
+
+**recall objective:**
+- `recall_ok`: new recall ≥ RECALL_FLOOR AND ≥ best × 0.95
+- `recall_improve`: improvement exceeds noise floor (`max(noise×0.5, 1/15)`)
+- `mrr_ok`: new mrr ≥ best mrr × 0.97
+- `top1_ok`: new top1 ≥ best top1 × 0.95
+- `precision_ok`: new precision ≥ best precision × 0.95
+
+**latency objective:** recall_ok + mrr_ok + top1_ok + precision_ok + latency improves > 0.05ms
+
+**cost objective:** recall_ok + mrr_ok + top1_ok + precision_ok + latency ≤ best×1.10 + cost improves
+
+**pareto objective:** recall drop ≤ 0.02 + latency ≤ best×1.10 + cost ≤ best×2.00 + any one improves + mrr_ok + top1_ok + precision_ok
+
+## Experiment ideas
+
+These are starting points — not an exhaustive list. Once you've tried them,
+think deeper. Ask yourself:
+
+- What information in `df` am I not using? (`genres`, `vote_count`, `vote_average`)
+- Am I searching the right field? (`title` vs `overview` vs `genres` vs full `text`)
+- Can I combine two strategies that each gave partial gains?
+- Can I remove something and get equal recall? (simplification wins)
+- What would a human do differently when searching for these specific queries?
+- Does the failure report show a vocabulary mismatch (BM25 failing) or a reranking problem?
+
+Known strategies to explore first:
+- Reciprocal Rank Fusion (RRF) — correct formula: `1/(60+rank_a) + 1/(60+rank_b)`
+- Larger candidate pool
+- Title-boosted BM25
+- Vote score boosting (additive, normalized: `score += vote / max_votes * 0.2`)
+- Cosine similarity instead of L2
+- Pseudo-relevance feedback: embed top-5 results, use as additional query vectors
+- Separate embeddings for title vs overview, combine scores
+- Query expansion: 2-3 rephrasings, union FAISS results
+
+## Simplicity criterion
+
+A 0.01 score gain that adds 50 lines — not worth it.
+A 0.01 score gain from a clean 5-line change — keep.
+Equal score, less code — always keep.
+
+## Regression awareness
+
+On every KEEP, a regression report prints which dev queries got worse.
+The agent prompt also includes a failure analysis of the current worst
+queries (recall < 1.0, sorted worst-first). Use this to reason about
+WHY retrieval is failing, not just THAT it is failing.
+
+## NEVER STOP
+
+Once the loop begins, do not ask the human for confirmation.
+Keep experimenting until manually stopped.
+
+## Current search.py:
+```python
+import numpy as np
+
+def search(query, df, bm25, model, index, top_k=10):
+    query_tokens = query.lower().split()
+    bm25_scores = bm25.get_scores(query_tokens)
+    
+    # Retrieve top 1000 candidates using BM25 to get a strong initial recall
+    candidate_indices = np.argsort(bm25_scores)[-1000:]
+    candidates = df.iloc[candidate_indices].copy()
+    
+    # Get query vector once
+    query_vec = model.encode([query]).astype("float32")
+    
+    # Calculate semantic scores for the candidates
+    # Extract existing vectors from the index for these candidates
+    # To be efficient, we perform a search on the full index but limit to the subset
+    # Or just use the model to encode the overview of these 1000 candidates
+    # Given we have an index, let's use the index search but filter by our candidates
+    # Actually, simpler: compute L2 distance via model.encode(candidates) if they were small,
+    # but since index exists, we search it.
+    
+    # Semantic scoring: 1 / (1 + L2)
+    # Re-using the index: we get full 1000, then filter
+    dists, idxs = index.search(query_vec, 2000)
+    
+    # map index results to score
+    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}
+    
+    candidates['semantic'] = candidates.index.map(lambda i: res_map.get(i, 0.0))
+    
+    # Popularity boost: log1p(vote_count) * vote_average
+    popularity = np.log1p(candidates['vote_count']) * candidates['vote_average']
+    
+    # Final score: mix of semantic and popularity
+    candidates['score'] = candidates['semantic'] * (1.0 + 0.05 * popularity)
+    
+    return candidates.sort_values("score", ascending=False).head(top_k).to_dict("records")
+```
+
+## Experiment history (last 10):
+- implement balanced RRF with genre-aware query expansion to handle semantic gaps: recall=0.227  latency=40.5ms  cost=$0.000721  mrr=0.212  top1=0.182  precision=0.036  (discard)
+- implement hybrid retrieval with genre-based boost and improved semantic weighting: recall=0.227  latency=25.7ms  cost=$0.000714  mrr=0.218  top1=0.182  precision=0.036  (discard)
+- use expanded text field and normalized hybrid scoring to improve recall: recall=0.545  latency=25.9ms  cost=$0.000698  mrr=0.369  top1=0.182  precision=0.100  (discard)
+- add genre-match scoring and log-transformed popularity boost for retrieval relevance: recall=0.591  latency=25.6ms  cost=$0.000752  mrr=0.428  top1=0.273  precision=0.118  (discard)
+- implement hybrid retrieval with explicit BM25 title boost and genre-weighted semantic similarity: recall=0.273  latency=289.0ms  cost=$0.000727  mrr=0.159  top1=0.000  precision=0.045  (discard)
+- hybrid search with re-scoring using BM25, semantic vectors, and genre overlap: recall=0.273  latency=23.8ms  cost=$0.000769  mrr=0.147  top1=0.000  precision=0.045  (discard)
+- Improve recall by increasing candidate pool size to 2000 for BM25 and adding a genre-aware re-ranking boost.: recall=0.273  latency=27.2ms  cost=$0.000743  mrr=0.140  top1=0.000  precision=0.045  (discard)
+- hybrid search with improved semantic normalization and weighted genre boosting: recall=0.318  latency=47.4ms  cost=$0.000776  mrr=0.295  top1=0.273  precision=0.055  (discard)
+- implement balanced RRF with hybrid candidate pooling and title-boosted BM25: recall=0.455  latency=24.3ms  cost=$0.000709  mrr=0.403  top1=0.364  precision=0.082  (discard)
+- implement balanced RRF with BM25 title weight and genre-boosted re-ranking: recall=0.409  latency=26.5ms  cost=$0.000777  mrr=0.409  top1=0.364  precision=0.073  (discard)
+
+## Active objective: recall
+Maximize recall@10. Latency and cost are secondary.
+
+## Three constraints tracked separately (never combined into one score):
+- recall@10      — fraction of expected movies found in top 10 results
+- latency_ms     — wall clock milliseconds per query
+- llm_cost_usd   — cost of this API call to generate the spec
+
+## ALREADY TRIED across all runs — do not repeat these:
+  - improve recall using RRF instead of weighted summation and better tokenization
+  - Improve recall by augmenting BM25 tokenization and using hybrid scores with balanced weightings
+  - replace hybrid scoring with reciprocal rank fusion (RRF) using a larger candidate pool for better recall coverage
+  - implement balanced RRF with genre-aware query expansion to handle semantic gaps
+  - implement hybrid retrieval with genre-based boost and improved semantic weighting
+  - use expanded text field and normalized hybrid scoring to improve recall
+  - add genre-match scoring and log-transformed popularity boost for retrieval relevance
+  - implement hybrid retrieval with explicit BM25 title boost and genre-weighted semantic similarity
+  - hybrid search with re-scoring using BM25, semantic vectors, and genre overlap
+  - Improve recall by increasing candidate pool size to 2000 for BM25 and adding a genre-aware re-ranking boost.
+  - hybrid search with improved semantic normalization and weighted genre boosting
+  - implement balanced RRF with hybrid candidate pooling and title-boosted BM25
+  - implement balanced RRF with BM25 title weight and genre-boosted re-ranking
+
+## AVOID FAILED LATENCY COLLAPSES
+
+Do NOT repeat:
+- pure FAISS-only retrieval
+- removing BM25 entirely
+- minimalist vector-only search
+- ultra-small candidate pools that collapse recall
+- retrieval simplification that destroys semantic coverage
+
+If your idea is similar to any of the above, pick something structurally different.
+
+## EXISTING CODE FEATURES (reference only)
+The current implementation already contains:
+  - Import: numpy
+Guidelines:
+- Preserve the existing search() function signature.
+- Existing imports may still be required.
+- Do NOT remove imports unless you are certain they are unused.
+- Avoid duplicate imports.
+- Preserve compatibility with the evaluation pipeline.
+- Modify only what is necessary to improve the objective.
+
+## CURRENT FAILURE ANALYSIS — queries where recall < 1.0 (worst first):
+  Query   : space western bounty hunter frontier planets
+  Recall  : 0.00  MRR: 0.00  Top1: 0  First hit: rank none
+  Got     : [interstellar, django unchained, the hateful eight, the good the bad and the ugly, 2001 a space odyssey]
+
+  Query   : cloning genetic engineering identity human experiment
+  Recall  : 0.00  MRR: 0.00  Top1: 0  First hit: rank none
+  Got     : [ex machina, walle, edward scissorhands, i origins, the terminator]
+
+  Query   : slasher masked killer teenagers summer camp
+  Recall  : 0.50  MRR: 0.25  Top1: 0  First hit: rank 4
+  Got     : [se7en, memento, saw, friday the 13th, no country for old men]
+
+  Query   : superhero team assemble save world threat
+  Recall  : 0.50  MRR: 1.00  Top1: 1  First hit: rank 1
+  Got     : [the avengers, zack snyder s justice league, avengers endgame, x men days of future past, the incredibles]
+
+  Query   : heist bank robbery crew planning elaborate escape
+  Recall  : 0.50  MRR: 0.14  Top1: 0  First hit: rank 7
+  Got     : [now you see me, lock stock and two smoking barrels, reservoir dogs, the usual suspects, baby driver]
+
+  Query   : lawyer courtroom trial justice wrongful conviction
+  Recall  : 0.50  MRR: 1.00  Top1: 1  First hit: rank 1
+  Got     : [12 angry men, no country for old men, law abiding citizen, the devil s advocate, just mercy]
+
+  Query   : teenage high school prom coming of age awkward
+  Recall  : 0.50  MRR: 0.20  Top1: 0  First hit: rank 5
+  Got     : [wonder, the breakfast club, call me by your name, the kissing booth, superbad]
+
+  Query   : drug cartel kingpin empire rise and fall
+  Recall  : 0.50  MRR: 1.00  Top1: 1  First hit: rank 1
+  Got     : [scarface, the departed, the empire strikes back, city of god, requiem for a dream]
+
+Use this to reason about WHY retrieval is failing, not just THAT it is failing.
+Ask yourself:
+- Are failures clustered in a specific slice (long_tail, ambiguous)?
+- Does the retrieved list suggest a vocabulary mismatch (BM25 failing)?
+- Does rank of first hit suggest reranking is the problem, not retrieval?
+- Would genre/vote signals push the right result higher?
+
+## Think structurally different. Ask yourself:
+- Can I remove something and get equal recall? Simpler = better.
+- What fields in df am I NOT using? (genres, vote_count, vote_average)
+- Can I combine two partial wins from history into one change?
+- Would a second embedding pass on the top 20 candidates improve ranking?
+- What would a human do differently for these specific queries?
+
+## ENVIRONMENT CONSTRAINTS — violations crash the run:
+- Allowed imports ONLY: numpy, rank_bm25, sentence_transformers, faiss, sklearn
+- nltk is NOT installed — do not import it
+- Use int() or np.int64(), NEVER np.int (deprecated)
+- Do NOT import from other project files
+
+## OUTPUT FORMAT (STRICT)
+
+The FIRST line of your response MUST be EXACTLY in this format:
+
+# DESCRIPTION: short description here
+
+Example:
+# DESCRIPTION: add genre weighting
+
+Immediately after that line, output the FULL Python file.
+
+Do NOT include:
+- markdown fences
+- explanations
+- prose
+- bullet points
+- comments before DESCRIPTION
+- partial diffs
+
+Your response MUST begin with:
+# DESCRIPTION:

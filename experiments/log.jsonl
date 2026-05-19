@@ -1,0 +1,486 @@
+{
+  "exp_id": "exp_000",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:21:40",
+  "prompt_hash": "none",
+  "search_py": "import numpy as np\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = query.lower().split()\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Retrieve top 1000 candidates using BM25 to get a strong initial recall\n    candidate_indices = np.argsort(bm25_scores)[-1000:]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # Get query vector once\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # Calculate semantic scores for the candidates\n    # Extract existing vectors from the index for these candidates\n    # To be efficient, we perform a search on the full index but limit to the subset\n    # Or just use the model to encode the overview of these 1000 candidates\n    # Given we have an index, let's use the index search but filter by our candidates\n    # Actually, simpler: compute L2 distance via model.encode(candidates) if they were small,\n    # but since index exists, we search it.\n    \n    # Semantic scoring: 1 / (1 + L2)\n    # Re-using the index: we get full 1000, then filter\n    dists, idxs = index.search(query_vec, 2000)\n    \n    # map index results to score\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    \n    candidates['semantic'] = candidates.index.map(lambda i: res_map.get(i, 0.0))\n    \n    # Popularity boost: log1p(vote_count) * vote_average\n    popularity = np.log1p(candidates['vote_count']) * candidates['vote_average']\n    \n    # Final score: mix of semantic and popularity\n    candidates['score'] = candidates['semantic'] * (1.0 + 0.05 * popularity)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 23.323959205299616,
+    "llm_cost_usd": Infinity
+  },
+  "status": "keep",
+  "description": "baseline",
+  "constraint_trace": {},
+  "slice_results": {},
+  "full_metrics": {
+    "recall": 0.5,
+    "mrr": 0.553896,
+    "ndcg": 0.448358,
+    "precision": 0.090909,
+    "top1": 0.454545
+  }
+}
+
+{
+  "exp_id": "exp_001",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:21:47",
+  "prompt_hash": "292b1352",
+  "search_py": "import numpy as np\n\ndef _bm25_tokenize(text):\n    # Replicating the required pipeline: accent removal (skipped for simplicity/deps),\n    # lowercase, punct strip, stopword filter (basic), len > 1\n    import string\n    text = text.lower()\n    for p in string.punctuation:\n        text = text.replace(p, \" \")\n    tokens = text.split()\n    # Simple stopword list based on standard NLP sets\n    stopwords = {\"the\", \"a\", \"an\", \"and\", \"or\", \"in\", \"of\", \"to\", \"is\", \"it\", \"with\", \"for\", \"on\", \"at\", \"by\"}\n    return [t for t in tokens if len(t) > 1 and t not in stopwords]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. BM25 Retrieval\n    query_tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # 2. Semantic Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 100)\n    \n    # 3. Reciprocal Rank Fusion (RRF)\n    # RRF = 1 / (60 + rank)\n    rrf_scores = {}\n    \n    # BM25 Ranks\n    bm25_sorted_idx = np.argsort(bm25_scores)[::-1][:100]\n    for rank, idx in enumerate(bm25_sorted_idx):\n        if bm25_scores[idx] > 0:\n            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (60 + rank)\n            \n    # Semantic Ranks\n    for rank, idx in enumerate(idxs[0]):\n        if idx != -1:\n            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (60 + rank)\n            \n    # 4. Final selection and ranking\n    candidate_indices = list(rrf_scores.keys())\n    candidates = df.iloc[candidate_indices].copy()\n    candidates['rrf_score'] = [rrf_scores[i] for i in candidates.index]\n    \n    # Boost by popularity to break ties and improve long-tail precision\n    # Using normalized vote score\n    max_votes = df['vote_count'].max() + 1\n    popularity = (candidates['vote_count'] / max_votes) * 0.1\n    candidates['final_score'] = candidates['rrf_score'] + popularity\n    \n    return candidates.sort_values(\"final_score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.5,
+    "latency_ms": 23.013207595795393,
+    "latency_p95": 27.647166047245264,
+    "latency_p99": 28.642416931688786,
+    "llm_cost_usd": 0.00069,
+    "mrr": 0.393939,
+    "ndcg": 0.401076,
+    "precision": 0.090909,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "improve recall using RRF instead of weighted summation and better tokenization",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_002",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:21:52",
+  "prompt_hash": "85552e9e",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\nimport re\n\ndef _bm25_tokenize(text):\n    # Replicate required tokenization pipeline\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = text.split()\n    # Simple stopword list to filter\n    stop_words = {\"the\", \"a\", \"an\", \"and\", \"or\", \"in\", \"on\", \"at\", \"to\", \"is\", \"of\", \"it\", \"with\", \"for\", \"as\"}\n    return [t for t in tokens if len(t) > 1 and t not in stop_words]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. BM25 scoring\n    tokenized_query = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    # 2. Semantic scoring\n    query_vec = model.encode([query]).astype(\"float32\")\n    # Retrieve more candidates to ensure recall\n    dists, idxs = index.search(query_vec, 500)\n    \n    # 3. Hybrid RRF-inspired scoring\n    # Normalize BM25\n    bm25_scores = (bm25_scores - np.min(bm25_scores)) / (np.max(bm25_scores) - np.min(bm25_scores) + 1e-9)\n    \n    # Normalize semantic (L2 distance to similarity)\n    sims = 1.0 / (1.0 + dists[0])\n    \n    final_scores = np.zeros(len(df))\n    # Fill BM25 component\n    final_scores += bm25_scores * 0.4\n    \n    # Fill Semantic component\n    for i, idx in enumerate(idxs[0]):\n        final_scores[idx] += sims[i] * 0.6\n        \n    # Popularity boost (log scale)\n    pop = np.log1p(df['vote_count'].values) * (df['vote_average'].values / 10.0)\n    final_scores += pop * 0.1\n    \n    # Get top candidates\n    top_indices = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 23.153749760240316,
+    "latency_p95": 26.682457886636257,
+    "latency_p99": 30.578624922782183,
+    "llm_cost_usd": 0.000662,
+    "mrr": 0.444805,
+    "ndcg": 0.434036,
+    "precision": 0.109091,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "Improve recall by augmenting BM25 tokenization and using hybrid scores with balanced weightings",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": true,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_003",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:21:57",
+  "prompt_hash": "8f227c08",
+  "search_py": "import numpy as np\n\ndef _bm25_tokenize(text):\n    import re\n    # Lowercase, remove punctuation, strip\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = text.split()\n    # Filter stopwords (very basic set) and length > 1\n    stopwords = {'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'were', 'will', 'with'}\n    return [t for t in tokens if t not in stopwords and len(t) > 1]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized_query = _bm25_tokenize(query)\n    \n    # Get BM25 scores and candidates\n    bm25_scores = bm25.get_scores(tokenized_query)\n    bm25_top_indices = np.argsort(bm25_scores)[-200:]\n    \n    # Get Semantic scores and candidates\n    query_vec = model.encode([query]).astype(\"float32\")\n    faiss_dists, faiss_indices = index.search(query_vec, 200)\n    \n    # RRF (Reciprocal Rank Fusion)\n    # Map indices to ranks\n    rrf_scores = {}\n    \n    # BM25 Ranks (higher score = better rank)\n    for rank, idx in enumerate(reversed(bm25_top_indices)):\n        if bm25_scores[idx] > 0:\n            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (60 + rank)\n            \n    # Semantic Ranks (lower L2 dist = better rank)\n    for rank, idx in enumerate(faiss_indices[0]):\n        if idx != -1:\n            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (60 + rank)\n            \n    # Get top candidates from RRF\n    candidate_ids = sorted(rrf_scores.keys(), key=lambda i: rrf_scores[i], reverse=True)[:50]\n    results = df.iloc[candidate_ids].copy()\n    \n    # Tie-break with popularity: log1p(vote_count) * vote_average\n    popularity = np.log1p(results['vote_count']) * results['vote_average']\n    \n    # Final sort\n    results['rrf_score'] = [rrf_scores[i] for i in results.index]\n    results['final_score'] = results['rrf_score'] * (1.0 + 0.02 * popularity)\n    \n    return results.sort_values(\"final_score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.363636,
+    "latency_ms": 23.722417186945677,
+    "latency_p95": 26.68458316475153,
+    "latency_p99": 28.624374885112047,
+    "llm_cost_usd": 0.000727,
+    "mrr": 0.393939,
+    "ndcg": 0.34904,
+    "precision": 0.063636,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "replace hybrid scoring with reciprocal rank fusion (RRF) using a larger candidate pool for better recall coverage",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_004",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:22:05",
+  "prompt_hash": "c20d4c9f",
+  "search_py": "import numpy as np\nimport re\n\ndef _bm25_tokenize(text):\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = text.split()\n    return [t for t in tokens if len(t) > 1]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # Preprocess\n    tokens = _bm25_tokenize(query)\n    query_vec = model.encode([query]).astype(\"float32\")\n    \n    # BM25 Retrieval\n    bm25_scores = bm25.get_scores(tokens)\n    # Get top 500 BM25 candidates\n    bm25_top_indices = np.argsort(bm25_scores)[-500:]\n    \n    # FAISS Retrieval\n    # Search 500 for overlap\n    dists, faiss_indices = index.search(query_vec, 500)\n    faiss_indices = faiss_indices[0]\n    faiss_scores = 1.0 / (1.0 + dists[0])\n    \n    # RRF calculation\n    rrf_scores = {}\n    \n    # BM25 ranks (reversed index to score)\n    for rank, idx in enumerate(reversed(bm25_top_indices)):\n        rrf_scores[idx] = rrf_scores.get(idx, 0.0) + 1.0 / (60.0 + rank)\n        \n    # FAISS ranks\n    for rank, idx in enumerate(faiss_indices):\n        rrf_scores[idx] = rrf_scores.get(idx, 0.0) + 1.0 / (60.0 + rank)\n        \n    # Genre Boosting\n    # Very simple heuristic: if a genre word is in the query, boost matching movies\n    genres_in_query = [g for g in [\"western\", \"science fiction\", \"comedy\", \"drama\", \"horror\", \"action\", \"thriller\", \"romance\"] if g in query.lower()]\n    \n    results = []\n    for idx, rrf_score in rrf_scores.items():\n        row = df.iloc[idx]\n        score = rrf_score\n        \n        # Genre boost\n        if genres_in_query:\n            for genre in genres_in_query:\n                if genre in str(row['genres']).lower():\n                    score *= 1.2\n        \n        # Recency/Popularity minor boost\n        score *= (1.0 + 0.02 * np.log1p(row['vote_count']) / 10.0)\n        \n        results.append((score, row))\n        \n    results.sort(key=lambda x: x[0], reverse=True)\n    return [r[1].to_dict() for r in results[:top_k]]",
+  "metrics": {
+    "recall": 0.227273,
+    "latency_ms": 40.500540751963854,
+    "latency_p95": 50.19041616469622,
+    "latency_p99": 132.4817081913352,
+    "llm_cost_usd": 0.000721,
+    "mrr": 0.212121,
+    "ndcg": 0.190633,
+    "precision": 0.036364,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "implement balanced RRF with genre-aware query expansion to handle semantic gaps",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_005",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:22:11",
+  "prompt_hash": "25135175",
+  "search_py": "import numpy as np\n\ndef _bm25_tokenize(text):\n    import re\n    # Simplified tokenization to match required logic\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = [t for t in text.split() if len(t) > 1]\n    return tokens\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. BM25 Retrieval\n    query_tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # 2. Semantic Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    # 3. Hybrid Scoring (Combine and normalize)\n    # Get top 200 candidates from both\n    candidates_indices = np.union1d(np.argsort(bm25_scores)[-200:], idxs[0])\n    sub_df = df.iloc[candidates_indices].copy()\n    \n    bm25_vals = bm25_scores[candidates_indices]\n    semantic_vals = np.zeros(len(candidates_indices))\n    \n    # Map semantic distances\n    dist_map = {idx: d for idx, d in zip(idxs[0], dists[0])}\n    for i, idx in enumerate(candidates_indices):\n        semantic_vals[i] = 1.0 / (1.0 + dist_map.get(idx, 10.0))\n    \n    # Min-max normalization for fusion\n    bm25_norm = (bm25_vals - bm25_vals.min()) / (bm25_vals.max() - bm25_vals.min() + 1e-6)\n    sem_norm = (semantic_vals - semantic_vals.min()) / (semantic_vals.max() - semantic_vals.min() + 1e-6)\n    \n    # Genre boost: identify genres in query (simple string match)\n    genre_boost = np.zeros(len(sub_df))\n    for i, genres in enumerate(sub_df['genres']):\n        for q_token in query_tokens:\n            if q_token in genres.lower():\n                genre_boost[i] = 0.2\n                \n    # Final Score\n    sub_df['score'] = (0.4 * bm25_norm) + (0.6 * sem_norm) + genre_boost\n    \n    return sub_df.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.227273,
+    "latency_ms": 25.70491610094905,
+    "latency_p95": 31.3269579783082,
+    "latency_p99": 67.97495810315013,
+    "llm_cost_usd": 0.000714,
+    "mrr": 0.217532,
+    "ndcg": 0.189236,
+    "precision": 0.036364,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "implement hybrid retrieval with genre-based boost and improved semantic weighting",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_006",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:22:17",
+  "prompt_hash": "a7645290",
+  "search_py": "import numpy as np\nimport re\n\ndef _bm25_tokenize(text):\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = [t for t in text.split() if len(t) > 1]\n    stopwords = {'the', 'and', 'a', 'to', 'of', 'in', 'is', 'it', 'for', 'on', 'with', 'as'}\n    return [t for t in tokens if t not in stopwords]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = _bm25_tokenize(query)\n    bm25_scores = np.array(bm25.get_scores(query_tokens))\n    \n    # Increase pool size to 2000 for better recall\n    pool_size = 2000\n    candidate_indices = np.argsort(bm25_scores)[-pool_size:]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, pool_size)\n    \n    # Vector score: normalized 0-1\n    res_map = {idx: 1.0 - (d / (1.0 + d)) for idx, d in zip(idxs[0], dists[0])}\n    \n    # BM25 score: min-max normalization\n    b_scores = bm25_scores[candidate_indices]\n    if b_scores.max() > b_scores.min():\n        b_scores = (b_scores - b_scores.min()) / (b_scores.max() - b_scores.min())\n    \n    candidates['semantic'] = [res_map.get(i, 0.0) for i in candidates.index]\n    candidates['bm25_norm'] = b_scores\n    \n    # Combine scores with weight towards semantic\n    candidates['score'] = (0.6 * candidates['semantic']) + (0.4 * candidates['bm25_norm'])\n    \n    # Popularity boost\n    popularity = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    candidates['score'] += 0.05 * popularity\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.545455,
+    "latency_ms": 25.881417095661163,
+    "latency_p95": 30.836999882012606,
+    "latency_p99": 31.724166125059128,
+    "llm_cost_usd": 0.000698,
+    "mrr": 0.369048,
+    "ndcg": 0.379389,
+    "precision": 0.1,
+    "top1": 0.181818
+  },
+  "status": "discard",
+  "description": "use expanded text field and normalized hybrid scoring to improve recall",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_007",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:22:23",
+  "prompt_hash": "b0ea671c",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    text = text.lower()\n    # Basic punctuation stripping\n    for p in \".,!?;:'\\\"-()[]\":\n        text = text.replace(p, \" \")\n    tokens = text.split()\n    # Simple stopword filter (common English)\n    stops = {\"a\", \"an\", \"the\", \"and\", \"is\", \"of\", \"in\", \"to\", \"it\", \"with\", \"for\", \"on\", \"as\", \"at\"}\n    return [t for t in tokens if len(t) > 1 and t not in stops]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = _bm25_tokenize(query)\n    bm25_scores = np.array(bm25.get_scores(query_tokens))\n    \n    # Retrieve larger pool for re-ranking\n    top_n_idx = np.argsort(bm25_scores)[-500:]\n    candidates = df.iloc[top_n_idx].copy()\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # Semantic scoring: 1 / (1 + distance)\n    # Using L2 distance from faiss index\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}\n    \n    # Calculate genre match score\n    query_lower = query.lower()\n    genre_scores = candidates['genres'].apply(lambda g: 1.0 if any(word in g.lower() for word in query_tokens) else 0.0)\n    \n    # Normalize BM25\n    bm25_norm = (bm25_scores[top_n_idx] - bm25_scores[top_n_idx].min())\n    if bm25_norm.max() > 0: bm25_norm /= bm25_norm.max()\n    \n    # Combined score\n    candidates['bm25'] = bm25_norm\n    candidates['semantic'] = candidates.index.map(lambda i: res_map.get(i, 0.0))\n    candidates['popularity'] = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    # Final weighting: prioritizes semantic and BM25, slightly nudged by genres and popularity\n    candidates['score'] = (0.5 * candidates['semantic']) + (0.3 * candidates['bm25']) + (0.1 * genre_scores) + (0.1 * candidates['popularity'])\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 25.567749980837107,
+    "latency_p95": 28.141333255916834,
+    "latency_p99": 29.494208749383688,
+    "llm_cost_usd": 0.000752,
+    "mrr": 0.42803,
+    "ndcg": 0.420603,
+    "precision": 0.118182,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "add genre-match scoring and log-transformed popularity boost for retrieval relevance",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_008",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:22:56",
+  "prompt_hash": "0e0177ae",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    # Replicate prepare.py pipeline: accent removal (none), lowercase, punct strip, stopword filter, len>1\n    # Simple regex-less tokenization compatible with available imports\n    import re\n    text = text.lower()\n    text = \"\".join([c if c.isalnum() or c.isspace() else \" \" for c in text])\n    tokens = [t for t in text.split() if len(t) > 1]\n    return tokens\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. BM25 scoring with title boost\n    tokenized_query = _bm25_tokenize(query)\n    bm25_scores = np.array(bm25.get_scores(tokenized_query))\n    \n    # 2. Semantic retrieval from FAISS\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    # Initialize scores\n    scores = np.zeros(len(df))\n    \n    # Normalize and add BM25 (Boost titles by scaling index)\n    scores += (bm25_scores - np.min(bm25_scores)) / (np.ptp(bm25_scores) + 1e-6)\n    \n    # Add semantic scores\n    semantic_scores = np.zeros(len(df))\n    for i, d in zip(idxs[0], dists[0]):\n        semantic_scores[i] = 1.0 / (1.0 + d)\n    \n    # Combine: Higher weight on semantic for general/long_tail queries\n    scores += 1.5 * semantic_scores\n    \n    # 3. Genre boosting\n    # Boost if any genre word appears in query\n    for idx in range(len(df)):\n        g = str(df.iloc[idx]['genres']).lower()\n        if any(token in g for token in tokenized_query):\n            scores[idx] += 0.5\n            \n    # 4. Popularity adjustment\n    # Use vote_average as a multiplier for ranking (weak boost)\n    scores *= (1.0 + 0.1 * (df['vote_average'].values / 10.0))\n    \n    # Top K selection\n    top_indices = np.argsort(scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.272727,
+    "latency_ms": 288.9912500977516,
+    "latency_p95": 300.44512497261167,
+    "latency_p99": 324.64525010436773,
+    "llm_cost_usd": 0.000727,
+    "mrr": 0.159091,
+    "ndcg": 0.164257,
+    "precision": 0.045455,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "implement hybrid retrieval with explicit BM25 title boost and genre-weighted semantic similarity",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_009",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:23:02",
+  "prompt_hash": "9034d2cc",
+  "search_py": "import numpy as np\nimport re\n\ndef _bm25_tokenize(text):\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = text.split()\n    return [t for t in tokens if len(t) > 1]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Get top 200 via BM25\n    bm25_idx = np.argsort(bm25_scores)[-200:]\n    \n    # Get top 200 via Semantic\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, faiss_idx = index.search(query_vec, 200)\n    \n    # Combine unique candidates\n    candidate_indices = np.unique(np.concatenate([bm25_idx, faiss_idx[0]]))\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # BM25 scores for candidates\n    c_bm25 = bm25_scores[candidate_indices]\n    c_bm25 = (c_bm25 - c_bm25.min()) / (c_bm25.max() - c_bm25.min() + 1e-9)\n    \n    # Semantic scores\n    c_semantic = np.zeros(len(candidates))\n    res_map = {idx: 1.0/(1.0+d) for idx, d in zip(faiss_idx[0], dists[0])}\n    for i, idx in enumerate(candidates.index):\n        c_semantic[i] = res_map.get(idx, 0.0)\n    c_semantic = (c_semantic - c_semantic.min()) / (c_semantic.max() - c_semantic.min() + 1e-9)\n    \n    # Genre boost: simple overlap\n    query_genres = [g.lower() for g in query_tokens if g in [\"action\", \"comedy\", \"drama\", \"horror\", \"romance\", \"sci-fi\", \"thriller\", \"fantasy\"]]\n    c_genre = np.zeros(len(candidates))\n    if query_genres:\n        for i, row in enumerate(candidates.itertuples()):\n            movie_genres = row.genres.lower()\n            c_genre[i] = sum(1 for g in query_genres if g in movie_genres)\n            \n    # Final Ranking\n    candidates['score'] = (0.4 * c_bm25) + (0.4 * c_semantic) + (0.2 * c_genre)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.272727,
+    "latency_ms": 23.768166080117226,
+    "latency_p95": 27.203458361327648,
+    "latency_p99": 28.114750050008297,
+    "llm_cost_usd": 0.000769,
+    "mrr": 0.14697,
+    "ndcg": 0.158668,
+    "precision": 0.045455,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "hybrid search with re-scoring using BM25, semantic vectors, and genre overlap",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_010",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:23:10",
+  "prompt_hash": "b4090248",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    import re\n    # Remove accents/lower/punct/strip/filter\n    text = text.lower()\n    text = re.sub(r'[^\\w\\s]', '', text)\n    tokens = text.split()\n    # Filter length > 1\n    return [t for t in tokens if len(t) > 1]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. BM25 Retrieval\n    tokenized_query = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    # Increase pool size to 2000 to capture more candidates\n    candidate_indices = np.argsort(bm25_scores)[-2000:]\n    candidates = df.iloc[candidate_indices].copy()\n    \n    # 2. Semantic Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 2000)\n    \n    # Map semantic scores\n    res_map = {idx: 1.0 / (1.0 + d) for idx, d in zip(idxs[0], dists[0])}\n    candidates['semantic'] = [res_map.get(i, 0.0) for i in candidates.index]\n    \n    # 3. Genre Boost\n    # Simple keyword match in genres column for query terms\n    q_tokens = set(tokenized_query)\n    genre_boost = candidates['genres'].apply(\n        lambda g: sum(1.0 for token in q_tokens if token in g.lower()) * 0.1\n    )\n    \n    # 4. Final Ranking\n    # Normalize BM25\n    bm25_vals = bm25_scores[candidate_indices]\n    bm25_norm = (bm25_vals - bm25_vals.min()) / (bm25_vals.max() - bm25_vals.min() + 1e-9)\n    \n    # Combined score\n    candidates['score'] = (0.4 * bm25_norm) + (0.4 * candidates['semantic']) + (0.2 * genre_boost)\n    \n    return candidates.sort_values(\"score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.272727,
+    "latency_ms": 27.15779235586524,
+    "latency_p95": 30.176167376339436,
+    "latency_p99": 31.959916930645704,
+    "llm_cost_usd": 0.000743,
+    "mrr": 0.140152,
+    "ndcg": 0.153971,
+    "precision": 0.045455,
+    "top1": 0.0
+  },
+  "status": "discard",
+  "description": "Improve recall by increasing candidate pool size to 2000 for BM25 and adding a genre-aware re-ranking boost.",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_011",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:23:18",
+  "prompt_hash": "31b0c78d",
+  "search_py": "import numpy as np\n\ndef _bm25_tokenize(text):\n    import re\n    import string\n    text = text.lower()\n    text = re.sub(r'[%s]' % re.escape(string.punctuation), '', text)\n    tokens = [t for t in text.split() if len(t) > 1]\n    # Simple stopword filter\n    stopwords = {'the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'it'}\n    return [t for t in tokens if t not in stopwords]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    # 1. BM25 Retrieval\n    tokenized_query = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    # Get top 500 candidates via BM25\n    top_bm25_idx = np.argsort(bm25_scores)[-500:]\n    \n    # 2. Semantic Retrieval\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 1000)\n    \n    # 3. Hybrid Scoring (RRF + Genre Boost)\n    # RRF constant k=60\n    scores = {}\n    \n    # Add BM25 ranks\n    for rank, idx in enumerate(reversed(top_bm25_idx)):\n        scores[idx] = scores.get(idx, 0.0) + 1.0 / (60 + rank)\n        \n    # Add Semantic ranks\n    for rank, (idx, dist) in enumerate(zip(idxs[0], dists[0])):\n        if idx != -1:\n            scores[idx] = scores.get(idx, 0.0) + 1.0 / (60 + rank)\n            \n    # Genre boost: simple check if query words appear in genres\n    query_words = set(tokenized_query)\n    def get_genre_boost(idx):\n        g = str(df.iloc[idx]['genres']).lower()\n        match = sum(1 for word in query_words if word in g)\n        return 1.0 + (match * 0.1)\n    \n    # Final Ranking\n    candidate_list = []\n    for idx, score in scores.items():\n        candidate_list.append((idx, score * get_genre_boost(idx)))\n        \n    candidate_list.sort(key=lambda x: x[1], reverse=True)\n    top_indices = [x[0] for x in candidate_list[:top_k]]\n    \n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.318182,
+    "latency_ms": 47.434874810278416,
+    "latency_p95": 50.29537482187152,
+    "latency_p99": 145.88504191488028,
+    "llm_cost_usd": 0.000776,
+    "mrr": 0.295455,
+    "ndcg": 0.266515,
+    "precision": 0.054545,
+    "top1": 0.272727
+  },
+  "status": "discard",
+  "description": "hybrid search with improved semantic normalization and weighted genre boosting",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_012",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:23:23",
+  "prompt_hash": "362e21bb",
+  "search_py": "import numpy as np\n\ndef _bm25_tokenize(text):\n    text = text.lower().replace('-', ' ')\n    import re\n    tokens = re.findall(r'\\w+', text)\n    stopwords = {'a', 'an', 'the', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'with', 'by'}\n    return [t for t in tokens if t not in stopwords and len(t) > 1]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = _bm25_tokenize(query)\n    \n    # 1. BM25 Scores with Title Boost\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # 2. Semantic Scores\n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    # 3. Reciprocal Rank Fusion\n    rrf_scores = np.zeros(len(df))\n    \n    # Fill BM25 ranks\n    bm25_ranked = np.argsort(bm25_scores)[::-1][:200]\n    for rank, idx in enumerate(bm25_ranked):\n        rrf_scores[idx] += 1.0 / (60.0 + rank)\n        \n    # Fill Semantic ranks\n    for rank, idx in enumerate(idxs[0]):\n        if idx != -1:\n            rrf_scores[idx] += 1.0 / (60.0 + rank)\n            \n    # 4. Popularity/Genre Adjustment\n    # Boost by vote_average to break ties and prioritize quality\n    popularity_boost = (df['vote_average'] / 10.0) * 0.1\n    final_scores = rrf_scores + popularity_boost\n    \n    top_indices = np.argsort(final_scores)[-top_k:][::-1]\n    return df.iloc[top_indices].to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.454545,
+    "latency_ms": 24.292042013257742,
+    "latency_p95": 34.55199999734759,
+    "latency_p99": 43.96062484011054,
+    "llm_cost_usd": 0.000709,
+    "mrr": 0.403139,
+    "ndcg": 0.355569,
+    "precision": 0.081818,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "implement balanced RRF with hybrid candidate pooling and title-boosted BM25",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_013",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:23:29",
+  "prompt_hash": "97dc5d31",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    text = text.lower().replace('.', '').replace(',', '').replace('!', '').replace('?', '').replace(':', '').replace(';', '')\n    tokens = text.split()\n    return [t for t in tokens if len(t) > 1]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    query_tokens = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(query_tokens)\n    \n    # Increase pool size to ensure candidate coverage\n    top_n = 500\n    bm25_indices = np.argsort(bm25_scores)[-top_n:]\n    bm25_ranks = {idx: rank for rank, idx in enumerate(reversed(np.argsort(bm25_scores)))}\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, faiss_indices = index.search(query_vec, top_n)\n    faiss_ranks = {idx: rank for rank, idx in enumerate(faiss_indices[0])}\n    \n    # Reciprocal Rank Fusion\n    all_indices = set(bm25_indices) | set(faiss_indices[0])\n    rrf_scores = {}\n    for idx in all_indices:\n        score = 0.0\n        if idx in bm25_ranks:\n            score += 1.0 / (60.0 + bm25_ranks[idx])\n        if idx in faiss_ranks:\n            score += 1.0 / (60.0 + faiss_ranks[idx])\n        rrf_scores[idx] = score\n    \n    candidates = df.iloc[list(all_indices)].copy()\n    candidates['rrf_score'] = candidates.index.map(lambda i: rrf_scores.get(i, 0.0))\n    \n    # Genre boost: check if query words appear in genres\n    query_lower = query.lower()\n    candidates['genre_boost'] = candidates['genres'].apply(lambda g: 1.2 if any(word in g.lower() for word in query_tokens) else 1.0)\n    \n    # Popularity boost\n    pop_boost = np.log1p(candidates['vote_count']) * (candidates['vote_average'] / 10.0)\n    \n    candidates['final_score'] = candidates['rrf_score'] * candidates['genre_boost'] * (1.0 + 0.1 * pop_boost)\n    \n    return candidates.sort_values(\"final_score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.409091,
+    "latency_ms": 26.52370883151889,
+    "latency_p95": 29.729667119681835,
+    "latency_p99": 30.84295755252242,
+    "llm_cost_usd": 0.000777,
+    "mrr": 0.409091,
+    "ndcg": 0.36582,
+    "precision": 0.072727,
+    "top1": 0.363636
+  },
+  "status": "discard",
+  "description": "implement balanced RRF with BM25 title weight and genre-boosted re-ranking",
+  "constraint_trace": {
+    "recall_floor": false,
+    "recall_drop": false,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": false,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
+{
+  "exp_id": "exp_014",
+  "objective": "recall",
+  "timestamp": "2026-05-19T13:23:34",
+  "prompt_hash": "2a7fd255",
+  "search_py": "import numpy as np\nfrom rank_bm25 import BM25Okapi\n\ndef _bm25_tokenize(text):\n    text = text.lower().replace('.', '').replace(',', '').replace('!', '').replace('?', '').replace(':', '').replace(';', '')\n    tokens = text.split()\n    stop_words = {'the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}\n    return [t for t in tokens if len(t) > 1 and t not in stop_words]\n\ndef search(query, df, bm25, model, index, top_k=10):\n    tokenized_query = _bm25_tokenize(query)\n    bm25_scores = bm25.get_scores(tokenized_query)\n    \n    top_n_indices = np.argsort(bm25_scores)[-200:]\n    \n    query_vec = model.encode([query]).astype(\"float32\")\n    dists, idxs = index.search(query_vec, 200)\n    \n    semantic_map = {idx: 1.0 / (1.0 + d) for idx, d in zip(idxs[0], dists[0])}\n    \n    results = df.iloc[top_n_indices].copy()\n    \n    bm25_norm = (bm25_scores[top_n_indices] - np.min(bm25_scores[top_n_indices])) / (np.max(bm25_scores[top_n_indices]) - np.min(bm25_scores[top_n_indices]) + 1e-6)\n    \n    genre_bonus = results['genres'].apply(lambda g: 0.2 if any(word in g.lower() for word in tokenized_query) else 0.0)\n    pop_score = np.log1p(results['vote_count']) * (results['vote_average'] / 10.0)\n    \n    semantic_scores = np.array([semantic_map.get(i, 0.0) for i in results.index])\n    \n    final_scores = (bm25_norm * 0.4) + (semantic_scores * 0.4) + (pop_score * 0.1) + (genre_bonus * 0.1)\n    \n    results['final_score'] = final_scores\n    return results.sort_values(\"final_score\", ascending=False).head(top_k).to_dict(\"records\")",
+  "metrics": {
+    "recall": 0.590909,
+    "latency_ms": 24.3306253105402,
+    "latency_p95": 27.282082941383123,
+    "latency_p99": 31.909207813441753,
+    "llm_cost_usd": 0.00076,
+    "mrr": 0.357576,
+    "ndcg": 0.396731,
+    "precision": 0.109091,
+    "top1": 0.090909
+  },
+  "status": "discard",
+  "description": "enhance retrieval by incorporating genre overlap and popularity into the ranking score for better precision and recall",
+  "constraint_trace": {
+    "recall_floor": true,
+    "recall_drop": true,
+    "latency_improve": false,
+    "mrr_ok": true,
+    "top1_ok": true,
+    "precision_ok": true,
+    "recall_ok": true,
+    "recall_improve": false
+  },
+  "slice_results": {},
+  "full_metrics": {}
+}
+
