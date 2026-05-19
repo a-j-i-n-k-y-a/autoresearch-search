@@ -1,4 +1,5 @@
 # agent_loop.py
+import re
 import statistics
 import ast
 import time
@@ -405,7 +406,10 @@ def git_commit(message):
             f"STDERR:\n{e.stderr}"
         )
     
-    return commit_result.stdout.strip()
+    # AFTER — extract only the short hash from "[branch abc1234] message" format
+    first_line = commit_result.stdout.strip().split('\n')[0]
+    match = re.search(r'\[.*?\s+([a-f0-9]+)\]', first_line)
+    return match.group(1) if match else first_line
 
 def git_restore():
     """
