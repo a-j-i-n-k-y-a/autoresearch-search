@@ -10,33 +10,28 @@ def search(query, df, bm25, model, index, top_k=10):
     bm25_scores = bm25.get_scores(tokens)
     
     query_vec = model.encode([query]).astype("float32")
-    dists, idx_s = index.search(query_vec, 300)
+    dists, idx_s = index.search(query_vec, 200)
     
-    # RRF parameters
     k = 60
-    
-    # Initialize RRF scores
     rrf_scores = np.zeros(len(df))
     
-    # BM25 contribution
-    idx_b = np.argsort(bm25_scores)[-300:]
+    # Efficient BM25 retrieval
+    idx_b = np.argsort(bm25_scores)[-200:]
     for rank, i in enumerate(idx_b[::-1]):
         rrf_scores[i] += 1.0 / (k + rank)
         
-    # Semantic contribution
+    # Semantic retrieval
     for rank, i in enumerate(idx_s[0]):
         rrf_scores[i] += 1.0 / (k + rank)
         
-    # Genre-intersection boosting (simple boolean check)
-    # Identify candidate indices with non-zero RRF scores
+    # Genre boost: identify candidates and apply mask
     candidates = np.where(rrf_scores > 0)[0]
-    
-    # Apply genre boost: if genre tokens exist in query, boost matches
     query_genres = [t for t in tokens if t in ["action", "comedy", "drama", "horror", "sci-fi", "thriller", "romance", "western", "crime"]]
+    
     if query_genres:
+        genres_col = df['genres'].values
         for i in candidates:
-            # Check if any query genre is in the dataframe genre string
-            genre_str = str(df['genres'].iloc[i]).lower()
+            genre_str = str(genres_col[i]).lower()
             if any(g in genre_str for g in query_genres):
                 rrf_scores[i] *= 1.5
                 

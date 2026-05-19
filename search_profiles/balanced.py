@@ -1,43 +1,48 @@
 import numpy as np
 from rank_bm25 import BM25Okapi
+import re
 
 def _bm25_tokenize(text):
-    import re
     return re.findall(r'\b\w\w+\b', text.lower())
 
 def search(query, df, bm25, model, index, top_k=10):
     tokens = _bm25_tokenize(query)
-    
-    # BM25 Retrieval
     bm25_scores = bm25.get_scores(tokens)
-    top_bm25_idx = np.argpartition(bm25_scores, -200)[-200:]
     
-    # Semantic Retrieval
     query_vec = model.encode([query]).astype("float32")
-    dists, idxs = index.search(query_vec, 200)
+    dists, idx_s = index.search(query_vec, 300)
     
-    # Combine unique candidates
-    candidate_indices = np.unique(np.concatenate([top_bm25_idx, idxs[0]]))
+    # RRF parameters
+    k = 60
     
-    # Scoring features
-    c_bm25 = bm25_scores[candidate_indices]
-    c_bm25 = (c_bm25 - c_bm25.min()) / (c_bm25.max() - c_bm25.min() + 1e-9)
+    # Initialize RRF scores
+    rrf_scores = np.zeros(len(df))
     
-    idx_map = {idx: 1.0/(1.0+d) for idx, d in zip(idxs[0], dists[0])}
-    c_semantic = np.array([idx_map.get(i, 0.0) for i in candidate_indices])
+    # BM25 contribution
+    idx_b = np.argsort(bm25_scores)[-300:]
+    for rank, i in enumerate(idx_b[::-1]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Semantic contribution
+    for rank, i in enumerate(idx_s[0]):
+        rrf_scores[i] += 1.0 / (k + rank)
+        
+    # Genre-intersection boosting (simple boolean check)
+    # Identify candidate indices with non-zero RRF scores
+    candidates = np.where(rrf_scores > 0)[0]
     
-    # Genre signal: binary match
-    c_genres = df.iloc[candidate_indices]['genres'].str.lower()
-    genre_match = np.array([1.0 if any(g in q_part for g in tokens) else 0.5 for q_part, genres in zip([query]*len(c_genres), c_genres)])
+    # Apply genre boost: if genre tokens exist in query, boost matches
+    query_genres = [t for t in tokens if t in ["action", "comedy", "drama", "horror", "sci-fi", "thriller", "romance", "western", "crime"]]
+    if query_genres:
+        for i in candidates:
+            # Check if any query genre is in the dataframe genre string
+            genre_str = str(df['genres'].iloc[i]).lower()
+            if any(g in genre_str for g in query_genres):
+                rrf_scores[i] *= 1.5
+                
+    # Popularity bias
+    rrf_scores[candidates] += np.log1p(df['vote_count'].iloc[candidates].values) * 0.01
     
-    # Popularity bias: log density
-    pop = np.log1p(df.iloc[candidate_indices]['vote_count'])
-    pop = (pop - pop.mean()) / (pop.std() + 1e-9)
+    top_indices = np.argsort(rrf_scores)[-top_k:][::-1]
     
-    # Weighted ensemble
-    final_scores = (0.35 * c_bm25) + (0.45 * c_semantic) + (0.1 * genre_match) + (0.1 * pop)
-    
-    # Sort and return
-    res = df.iloc[candidate_indices].copy()
-    res['score'] = final_scores
-    return res.sort_values("score", ascending=False).head(top_k).to_dict("records")
+    return df.iloc[top_indices].to_dict("records")
